@@ -1,5 +1,14 @@
 # Changelog / 更新日志
 
+## v1.1.1 — 2026-11-24 (maintenance)
+
+- Add a user-confirmed, one-click cleanup for the old `/data/kano_temp_led.sh` script and its exact UFI-TOOLS boot hook.
+- Stop only the matching old script process, back up the previous boot file and refuse unexpected/custom boot commands.
+- Preserve existing monitoring history, cellular traffic counters, signal logs and PushPlus settings.
+- Keep LED control opt-in, with white below 55°C, blue from 55°C and red from 65°C; one-degree cooling hysteresis.
+- Local shell/JS syntax and mocked cleanup tests passed. F50 device behavior needs user confirmation.
+
+
 ## v1.1.0 — 2026-11-24 (optional physical LED)
 
 - Add an **optional and default-off** thermal LED switch to the UFI-TOOLS dashboard.
