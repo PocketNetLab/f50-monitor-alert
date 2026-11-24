@@ -1,6 +1,6 @@
 # F50 Monitor & Alert · F50 设备监控与微信警报
 
-**v1.0 · Community Plugin for UFI-TOOLS**  
+**v1.0.1 · Community Plugin for UFI-TOOLS · 流量统计修复 / Traffic Counter Fix**  
 [中文说明](#中文介绍) · [English](#english-introduction) · [下载安装 / Download](#下载安装--installation) · [联系作者 / Contact](#作者与联系--author--contact)
 
 ## 中文介绍
@@ -71,7 +71,7 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 
 ## 下载安装 / Installation
 
-**Plugin file:** [F50_Monitor_Alert_v1.0.txt](F50_Monitor_Alert_v1.0.txt)
+**Plugin file:** [F50_Monitor_Alert_v1.0.1.txt](F50_Monitor_Alert_v1.0.1.txt)
 
 1. 在 F50 的 UFI-TOOLS「插件功能」中导入上述 TXT 文件，提交并刷新页面。  
    In UFI-TOOLS → Plugins, import the TXT file, submit, then refresh the web page.
@@ -85,9 +85,17 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 **旧版本升级 / Upgrading:** 内部测试版本的数据目录保持为 `/data/local/tmp/f50_alert_v6` 以便兼容。不要点击「卸载守护及数据」以免清除历史。流量计数器重置或旧统计口径不一致时，监控增量可能需要重新从有效基线累计。  
 Existing test builds use `/data/local/tmp/f50_alert_v6` for compatibility. Do not use “Uninstall daemon and data” when retaining history is important. Delta counters may restart from a new baseline after resets.
 
+## v1.0.1 流量修复说明 / Traffic Counter Fix
+
+**中文：** v1.0 采用 Shell 32 位整数运算，遇到 F50 大流量计数器时可能发生取余回绕，导致“今日/本月 0.00 MB”或统计异常。v1.0.1 使用可精确表示当前字节范围的 AWK 运算处理收发总量及累计增量，并把新统计放入 `flow_v101.*` 文件。原 `flow_v65.*` **不会被删除**；首次有效采样显示 0 MB 正常，后续有效采样和实际联网后才增长。
+
+**English:** Version 1.0 could overflow 32-bit Shell arithmetic with large modem counters, leading to zero or incorrect traffic deltas. v1.0.1 uses safe AWK-based byte arithmetic and starts an independent `flow_v101.*` ledger while preserving previous files. A first-sample value of 0 MB is expected; subsequent increments should accumulate normally.
+
+详见 / Details: [docs/flow-fix.md](docs/flow-fix.md)
+
 ## 兼容性与限制 / Compatibility & Limitations
 
-- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.0 尚缺乏多设备、长期稳定性验证。  
+- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.0.1 尚缺乏多设备、长期稳定性验证。  
   Some functionality has been exercised on ZTE F50 with UFI-TOOLS v4.1.5/v4.1.6; extensive multi-device and long-duration validation is still pending.
 - `goform`、`ufi_req`、`zreq` 接口随固件可能变化。SINR 等参数可能缺失。  
   Firmware-dependent endpoints and radio measurements may be unavailable.
