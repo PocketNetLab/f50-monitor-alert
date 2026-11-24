@@ -1,0 +1,12 @@
+*.log
+*.token
+*.state
+*.native
+*.quality
+*.since
+*.tsv
+*.queue
+*.sent
+*push_body.json
+__pycache__/
+.DS_Store
