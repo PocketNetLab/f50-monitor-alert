@@ -104,6 +104,37 @@ Existing test builds use `/data/local/tmp/f50_alert_v6` for compatibility. Do no
 
 ---
 
+## 捐赠 / Donate
+
+**中文**
+
+- 如果这个项目对你有帮助，欢迎打赏支持维护
+- 捐赠完全自愿，不影响功能使用
+- 感谢每一位支持者
+
+**English**
+
+- Donations are optional and appreciated
+- Your support helps ongoing maintenance and improvements
+- Thank you for supporting this project
+
+<div align="center">
+<table>
+  <tr>
+    <th align="center">微信支付 / WeChat Pay</th>
+    <th align="center">支付宝 / Alipay</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/wechat-pay.svg" alt="微信支付收款码 / WeChat Pay QR code" width="240"></td>
+    <td align="center"><img src="docs/images/alipay-pay.svg" alt="支付宝收款码 / Alipay QR code" width="240"></td>
+  </tr>
+</table>
+</div>
+
+> 收款码仅用于自愿支持项目维护，插件及其功能免费使用。 / Donations are entirely optional. The plugin and all features remain free.
+
+---
+
 ## 作者与联系 / Author & Contact
 
 **作者 / Maintainer:** **PocketNetLab**  
