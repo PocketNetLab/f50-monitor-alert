@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# F50 UFI-TOOLS v1.1.0: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
+# F50 UFI-TOOLS v1.1.1: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
 BASE=/data/local/tmp/f50_alert_v6
 BIN=$BASE/monitor.sh
 PID=$BASE/monitor.pid
@@ -79,9 +79,55 @@ led_supported() {
 led_legacy_conflict() {
   # The third-party kano_temp_led.sh (v1.4) writes these same LED files.
   # Do not stop/delete other plugins without user consent.
-  [ -e /data/kano_temp_led.sh ] && return 0
+  { [ -e /data/kano_temp_led.sh ] || [ -L /data/kano_temp_led.sh ]; } && return 0
   if [ -r "$BOOT" ] && grep -Fq 'kano_temp_led.sh' "$BOOT";then return 0;fi
   return 1
+}
+# Strictly match argv to avoid killing unrelated processes or grep/shell commands.
+legacy_led_pids() {
+  for p in /proc/[0-9]*;do
+    [ -r "$p/cmdline" ] || continue
+    if tr '\000' '\n' < "$p/cmdline" 2>/dev/null | grep -Fxq '/data/kano_temp_led.sh';then
+      echo "${p##*/}"
+    fi
+  done
+}
+led_cleanup_legacy() {
+  # Opt-in maintenance only: no traffic, temperature, modem, or PushPlus data touched.
+  [ ! -L /data/kano_temp_led.sh ] || { echo LED_LEGACY_SYMLINK_REFUSED;return 1; }
+  if [ -e "$BOOT" ];then
+    [ -f "$BOOT" ] && [ -r "$BOOT" ] && [ -w "$BOOT" ] || { echo LED_BOOT_NOT_WRITABLE;return 1; }
+    # Only the standalone command installed by the historical third-party plugin may be removed.
+    awk 'index($0,"kano_temp_led.sh") && $0 !~ /^[[:space:]]*sh[[:space:]]+\/data\/kano_temp_led[.]sh[[:space:]]*&?[[:space:]]*$/ {bad=1} END{exit bad?1:0}' "$BOOT" ||
+      { echo LED_BOOT_CUSTOM_LINE_REFUSED;return 1; }
+  fi
+  echo 0 > "$LED_ON"
+  led_restore
+  pids=$(legacy_led_pids)
+  for oldpid in $pids;do
+    case "$oldpid" in ''|*[!0-9]*) continue;;esac
+    [ "$oldpid" = "$" ] && continue
+    kill "$oldpid" 2>/dev/null || true
+  done
+  [ -z "$pids" ] || sleep 1
+  still=$(legacy_led_pids)
+  [ -z "$still" ] || { echo LED_LEGACY_PROCESS_STILL_RUNNING;return 1; }
+  if [ -r "$BOOT" ] && grep -Fq 'kano_temp_led.sh' "$BOOT";then
+    backup="$BASE/ufi_tools_boot_before_led_cleanup.bak"
+    if [ ! -e "$backup" ];then
+      cp "$BOOT" "$backup" && chmod 600 "$backup" || { echo LED_BOOT_BACKUP_FAILED;return 1; }
+    fi
+    newboot="${BOOT}.f50-led-tmp.$"
+    awk '$0 !~ /^[[:space:]]*sh[[:space:]]+\/data\/kano_temp_led[.]sh[[:space:]]*&?[[:space:]]*$/' "$BOOT" > "$newboot" ||
+      { rm -f "$newboot";echo LED_BOOT_EDIT_FAILED;return 1; }
+    mv "$newboot" "$BOOT" || { rm -f "$newboot";echo LED_BOOT_REPLACE_FAILED;return 1; }
+  fi
+  if [ -f /data/kano_temp_led.sh ];then
+    rm -f /data/kano_temp_led.sh || { echo LED_LEGACY_FILE_DELETE_FAILED;return 1; }
+  fi
+  led_legacy_conflict && { echo LED_LEGACY_REMAINS;return 1; }
+  logit 'LED_LEGACY_CLEANED only old LED script and boot entry, all monitoring data preserved'
+  echo LED_LEGACY_CLEANED
 }
 led_snapshot() {
   [ -r "$LED_SNAPSHOT" ] && return 0
@@ -135,6 +181,7 @@ led_config() {
       choice=$(cat "$ZONE" 2>/dev/null)
       [ "$choice" != auto ] && valid_zone "$choice" || { echo LED_SELECT_CPU_ZONE_FIRST;return 1; }
       led_legacy_conflict && { echo LED_CONFLICT_REMOVE_OLD_LED_PLUGIN_FIRST;return 1; }
+      [ -z "$(legacy_led_pids)" ] || { echo LED_CONFLICT_OLD_PROCESS_RUNNING;return 1; }
       led_supported || { echo LED_UNSUPPORTED_HARDWARE;return 1; }
       valid_pid || { echo LED_START_MONITOR_FIRST;return 1; }
       led_snapshot || { echo LED_CANNOT_BACKUP_BRIGHTNESS;return 1; }
@@ -725,7 +772,7 @@ probe_now() {
   status
 }
 status() {
-  echo VERSION=1.1.0
+  echo VERSION=1.1.1
   led_status
   if [ -r "$REC" ];then
     IFS='|' read -r tag sample_ts remaining < "$REC"
@@ -753,7 +800,7 @@ status() {
 }
 case "$1" in
  scan) scan;; read) read_temp;; run) run;; start) start;; stop) stop;; status) status;; selftest) selftest;;
- led_config) led_config "$2";; led_status) led_status;;
+ led_config) led_config "$2";; led_status) led_status;; led_cleanup) led_cleanup_legacy;;
  boot) boot_on && echo BOOT_ENABLED;;
  history) tail -n 3000 "$HISTORY" 2>/dev/null || true;;
  signals) tail -n 3000 "$SIGNAL" 2>/dev/null || true;;
