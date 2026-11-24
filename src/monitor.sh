@@ -330,7 +330,7 @@ telemetry_diag() {
   src=$(cat "$NATIVE_SRC" 2>/dev/null);echo "NATIVE_SOURCE=${src:-NONE}"
   fb=$(read_cellular_bytes);echo "SYSFS_FALLBACK=$fb"
   echo 'SYSFS is a raw counter since interface reset; zero increment at the first sample is expected.'
-  [ -r "$FLOW" ] && cat "$FLOW" | sed 's/^/FLOW_V65_STATE=/'
+  [ -r "$FLOW" ] && cat "$FLOW" | sed 's/^/FLOW_V101_STATE=/'
 }
 # Daily summary: samples, sum(milliC), max/min, over-threshold seconds, radio averages, flow deltas.
 stats_load() {
