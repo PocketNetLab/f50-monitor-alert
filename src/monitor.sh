@@ -70,7 +70,7 @@ normalize() {
   else return 1;fi
   printf '%s\n' "$value"
 }
-# Optional physical tri-color F50 LED: <50C white, 50-59.9C blue, >=60C red.
+# Optional physical tri-color F50 LED: <55C white, 55-64.9C blue, >=65C red.
 # Controlled ONLY when the user explicitly enables it. 1C falling hysteresis
 # avoids switching rapidly near thresholds. Never modify modem/power settings.
 led_supported() {
@@ -108,8 +108,8 @@ led_apply() {
   # First cycle captures the normal brightness to restore when disabled.
   led_snapshot || { echo SNAPSHOT_FAILED > "$LED_LAST";return 1; }
   last=$(cat "$LED_LAST" 2>/dev/null)
-  if [ "$t" -ge 60000 ] || { [ "$last" = RED ] && [ "$t" -ge 59000 ]; };then color=RED
-  elif [ "$t" -ge 50000 ] || { [ "$last" = BLUE ] && [ "$t" -ge 49000 ]; };then color=BLUE
+  if [ "$t" -ge 65000 ] || { [ "$last" = RED ] && [ "$t" -ge 64000 ]; };then color=RED
+  elif [ "$t" -ge 55000 ] || { [ "$last" = BLUE ] && [ "$t" -ge 54000 ]; };then color=BLUE
   else color=WHITE;fi
   [ "$color" = "$last" ] && return 0
   # Recheck enabled in case another command toggled OFF during this sample.
