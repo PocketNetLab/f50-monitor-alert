@@ -1,6 +1,6 @@
 # F50 Monitor & Alert · F50 设备监控与微信警报
 
-**v1.0.1 · Community Plugin for UFI-TOOLS · 流量统计修复 / Traffic Counter Fix**  
+**v1.1.0 · Community Plugin for UFI-TOOLS · LED 温控灯 / Thermal LED**  
 [中文说明](#中文介绍) · [English](#english-introduction) · [下载安装 / Download](#下载安装--installation) · [联系作者 / Contact](#作者与联系--author--contact)
 
 ## 中文介绍
@@ -69,9 +69,19 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 
 **Read-only policy:** No automatic power-off, reboot, mobile-data toggle, or CPU frequency changes. Data usage figures are device-side estimates, **not carrier billing records**.
 
+## 可选温控指示灯 / Optional Thermal LED
+
+- **低于55℃白灯 / White below 55°C**
+- **达到55℃蓝灯 / Blue at or above 55°C**
+- **达到65℃红灯 / Red at or above 65°C**
+
+灯控独立开关，默认关闭；手动启用时使用已选、经过核实的 F50 CPU/SoC 温区，**不会自动关机、重启或断网**。降温回切采用 1℃ 回差以减少闪烁。如果旧版「U30 U20 F50 温控指示灯」仍在设备中，将拒绝启用以避免同时写入 LED。此功能需对应硬件 LED 节点及高级后台/root 权限，**目前尚未在更多 F50 固件上实机验证**。
+
+The physical LED controller is **opt-in and disabled by default**. Below 55°C = white, 55–64.9°C = blue, 65°C or higher = red, with 1°C cooling hysteresis. Requires supported LED sysfs nodes and access to the verified SoC thermal zone. Conflicting legacy thermal LED scripts block activation. No power or mobile-data actions are performed. Hardware compatibility remains to be verified.
+
 ## 下载安装 / Installation
 
-**Plugin file:** [F50_Monitor_Alert_v1.0.1.txt](F50_Monitor_Alert_v1.0.1.txt)
+**Plugin file:** [F50_Monitor_Alert_v1.1.0.txt](F50_Monitor_Alert_v1.1.0.txt)
 
 1. 在 F50 的 UFI-TOOLS「插件功能」中导入上述 TXT 文件，提交并刷新页面。  
    In UFI-TOOLS → Plugins, import the TXT file, submit, then refresh the web page.
@@ -95,7 +105,7 @@ Existing test builds use `/data/local/tmp/f50_alert_v6` for compatibility. Do no
 
 ## 兼容性与限制 / Compatibility & Limitations
 
-- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.0.1 尚缺乏多设备、长期稳定性验证。  
+- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.1.0 尚缺乏多设备、长期稳定性验证。  
   Some functionality has been exercised on ZTE F50 with UFI-TOOLS v4.1.5/v4.1.6; extensive multi-device and long-duration validation is still pending.
 - `goform`、`ufi_req`、`zreq` 接口随固件可能变化。SINR 等参数可能缺失。  
   Firmware-dependent endpoints and radio measurements may be unavailable.
