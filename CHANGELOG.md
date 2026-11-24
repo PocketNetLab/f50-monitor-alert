@@ -1,5 +1,14 @@
 # Changelog / 更新日志
 
+## v1.0.1 — 2026-11-24 (bugfix)
+
+- Fix 32-bit Android Shell wraparound in large native flow counters (31x GB can become 1.88 GB).
+- Use AWK-safe arithmetic for combined RX+TX, deltas, daily/monthly totals and cellular fallback.
+- Start a separate `flow_v101.*` ledger; preserve older flow files, temperature and signal histories, settings, and PushPlus token.
+- Keep read-only policy: no shutdown, reboot, or mobile data changes.
+- Synthetic flow tests passed, including large counter and >4GB deltas. F50 long-duration field verification is pending.
+
+
 ## v1.0 — 2026-11-24（首次公开发布）
 
 - 发布适配 ZTE F50 / UFI-TOOLS 的只读设备监控插件。
