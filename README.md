@@ -9,7 +9,7 @@
 
 **F50 Monitor & Alert** 是专为 **装在外置充电背包、由移动电源持续供电的中兴 F50 随身 Wi-Fi** 使用场景而设计的监控插件。
 
-这类背包可能同时容纳 **F50、外接电池和散热风扇**。在移动、弱信号或长时间使用时，F50 可能持续发热；而外部供电通常不会因为软件关机而被自动切断。本插件的思路是 **持续观测、记录和发送警报**，而不是自动关机或断网。
+**典型场景：F50 连接充电背包或外置移动电源后，被放进衣服口袋、外套内侧或书包夹层。** 设备可能因衣物遮挡、书包内部通风差、5G 高负载或弱信号而**突然升温**；用户却未必能及时看到机身状态。充电背包还可能持续给 F50 供电，即使软件关机也可能再次通电启动。因此本插件专注于 **持续监测温度、记录异常并及时向手机发送微信警报**，提醒用户检查摆放位置与散热，而不是自动关机或断网。
 
 插件运行在 **ZTE F50 + UFI-TOOLS 高级后台**，可用浏览器查看设备状态，并通过 **PushPlus** 将摘要和异常提醒发送到微信。
 
@@ -30,9 +30,11 @@
 
 ### 典型使用情景
 
-- F50 放在带散热风扇的充电背包中，长时间随身供电
-- 在车上或移动途中观察信号质量、温度波动和异常提醒
-- 每天通过微信查看最近的温度曲线、流量和网络信号报告
+- **衣服口袋或外套内：** F50 持续由充电背包供电，衣物覆盖后热量积聚，温度突然升高时自动发微信提醒
+- **书包、通勤背包或夹层内：** 设备处于封闭空间，通风不足且用户难以摸到机身，借助手机监控温度走势
+- **火车、汽车与移动途中：** 网络频繁切换、弱信号或持续传输时，联动查看 RSRP、流量与温度变化
+- **宿舍、办公桌、长时间下载或共享网络：** 全天候记录设备发热与流量情况，定期收取健康日报
+- **外接散热风扇测试：** 对比散热条件变化前后的 24h 温度曲线；插件不直接控制风扇或电池电源
 
 ## English Introduction
 
@@ -40,7 +42,7 @@
 
 **F50 Monitor & Alert** is a community monitoring plugin designed primarily for the **ZTE F50 portable 5G hotspot used inside an external battery-powered carrying/charging pouch or backpack**, often alongside a cooling fan.
 
-When powered continuously from an external battery pack, the hotspot may run for extended periods and become warm in poor ventilation or weak cellular coverage. Software shutdown may not keep the device powered off while external power remains connected. This plugin focuses on **read-only monitoring, trend visualization, and phone notifications** rather than automatic shutdown or network interruption.
+**Typical scenario:** An externally powered F50 is tucked **inside a jacket or clothing pocket, or into a backpack compartment**. Covered by fabric or surrounded by other items, it may experience a **sudden temperature rise** due to trapped heat, high 5G traffic, or weak cellular coverage—while the user cannot easily see or touch the device. A charging backpack may also keep supplying power, so a software shutdown may not keep the F50 off. The plugin therefore focuses on **continuous monitoring, temperature trend recording, and prompt WeChat alerts**, helping the user check ventilation and device placement instead of attempting shutdown or network interruption.
 
 It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sends alerts and daily summaries through **PushPlus (WeChat)**.
 
@@ -56,6 +58,14 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 | 4G/5G radio status | RSRP trends, optional SINR when exposed by the firmware |
 | WeChat reports | PushPlus event notifications, daily HTML tables, and optional charts (SVG display depends on the client) |
 | Diagnostics | Thermal-zone selection, data export, logs, self-check, and startup monitoring |
+
+### Other use cases
+
+- **Inside clothes or a jacket pocket:** Get notified when the hotspot heats up unexpectedly while continuously powered from a battery pack.
+- **Inside a backpack:** Track temperature changes when the F50 is out of sight in a poorly ventilated compartment.
+- **Trains, cars and commuting:** Compare radio signal quality, data traffic and thermal trends during mobility.
+- **Desk, dorm or office operation:** Keep long-running usage records and receive daily summaries.
+- **Cooling-fan experiments:** Compare temperature charts before and after changing airflow (the plugin does not control fans or battery power).
 
 **Read-only policy:** No automatic power-off, reboot, mobile-data toggle, or CPU frequency changes. Data usage figures are device-side estimates, **not carrier billing records**.
 
