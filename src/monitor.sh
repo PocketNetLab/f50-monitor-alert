@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# F50 UFI-TOOLS v1.0.1 flow arithmetic hotfix: telemetry and notifications ONLY. No power, radio, or connectivity controls.
+# F50 UFI-TOOLS v1.1.0: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
 BASE=/data/local/tmp/f50_alert_v6
 BIN=$BASE/monitor.sh
 PID=$BASE/monitor.pid
@@ -10,6 +10,13 @@ PUSH=$BASE/push.on
 DAILY=$BASE/daily.on
 HOUR=$BASE/daily.hour
 RISE=$BASE/rise.milli_per_min
+LED_ON=$BASE/led.on
+LED_SNAPSHOT=$BASE/led.original
+LED_LAST=$BASE/led.last
+LED_RED=/sys/class/leds/sc27xx:red/brightness
+LED_WHITE=/sys/class/leds/sc27xx:green/brightness
+LED_BLUE=/sys/class/leds/sc27xx:blue/brightness
+LED_BRIGHT=96
 LOG=$BASE/events.log
 REC=$BASE/live
 HISTORY=$BASE/temperature.tsv
@@ -38,6 +45,7 @@ mkdir -p "$BASE" || exit 1
 [ -r "$DAILY" ] || echo 1 > "$DAILY"
 [ -r "$HOUR" ] || echo 08 > "$HOUR"
 [ -r "$RISE" ] || echo 1000 > "$RISE"
+[ -r "$LED_ON" ] || echo 0 > "$LED_ON"  # Default OFF; never alter hardware without consent
 chmod 700 "$BASE" 2>/dev/null || true
 
 is_int() { case "$1" in ''|*[!0-9]*) return 1;; esac; return 0; }
@@ -62,6 +70,81 @@ normalize() {
   else return 1;fi
   printf '%s\n' "$value"
 }
+# Optional physical tri-color F50 LED: <50C white, 50-59.9C blue, >=60C red.
+# Controlled ONLY when the user explicitly enables it. 1C falling hysteresis
+# avoids switching rapidly near thresholds. Never modify modem/power settings.
+led_supported() {
+  [ -w "$LED_RED" ] && [ -w "$LED_WHITE" ] && [ -w "$LED_BLUE" ]
+}
+led_legacy_conflict() {
+  # The third-party kano_temp_led.sh (v1.4) writes these same LED files.
+  # Do not stop/delete other plugins without user consent.
+  [ -e /data/kano_temp_led.sh ] && return 0
+  if [ -r "$BOOT" ] && grep -Fq 'kano_temp_led.sh' "$BOOT";then return 0;fi
+  return 1
+}
+led_snapshot() {
+  [ -r "$LED_SNAPSHOT" ] && return 0
+  r=$(cat "$LED_RED" 2>/dev/null);w=$(cat "$LED_WHITE" 2>/dev/null);b=$(cat "$LED_BLUE" 2>/dev/null)
+  for v in "$r" "$w" "$b";do is_int "$v" && [ "$v" -le 255 ] || return 1;done
+  printf '%s %s %s\n' "$r" "$w" "$b" > "$LED_SNAPSHOT"
+}
+led_write() {
+  printf '%s\n' "$1" > "$LED_RED" && printf '%s\n' "$2" > "$LED_WHITE" && printf '%s\n' "$3" > "$LED_BLUE"
+}
+led_restore() {
+  # Restore the observed LED state; it may be superseded by normal firmware control.
+  if [ -r "$LED_SNAPSHOT" ] && led_supported;then
+    read -r r w b < "$LED_SNAPSHOT"
+    led_write "$r" "$w" "$b" >/dev/null 2>&1 || true
+  fi
+  rm -f "$LED_SNAPSHOT" "$LED_LAST"
+}
+led_apply() {
+  [ "$(cat "$LED_ON" 2>/dev/null)" = 1 ] || return 0
+  is_int "$t" || return 1
+  led_legacy_conflict && { echo CONFLICT > "$LED_LAST";return 1; }
+  led_supported || { echo UNSUPPORTED > "$LED_LAST";return 1; }
+  # First cycle captures the normal brightness to restore when disabled.
+  led_snapshot || { echo SNAPSHOT_FAILED > "$LED_LAST";return 1; }
+  last=$(cat "$LED_LAST" 2>/dev/null)
+  if [ "$t" -ge 60000 ] || { [ "$last" = RED ] && [ "$t" -ge 59000 ]; };then color=RED
+  elif [ "$t" -ge 50000 ] || { [ "$last" = BLUE ] && [ "$t" -ge 49000 ]; };then color=BLUE
+  else color=WHITE;fi
+  [ "$color" = "$last" ] && return 0
+  # Recheck enabled in case another command toggled OFF during this sample.
+  [ "$(cat "$LED_ON" 2>/dev/null)" = 1 ] || return 0
+  case "$color" in
+    RED) led_write "$LED_BRIGHT" 0 0;;
+    BLUE) led_write 0 0 "$LED_BRIGHT";;
+    WHITE) led_write 0 "$LED_BRIGHT" 0;;
+  esac || { echo WRITE_FAILED > "$LED_LAST";return 1; }
+  printf '%s\n' "$color" > "$LED_LAST"
+}
+led_status() {
+  echo LED_ON="$(cat "$LED_ON" 2>/dev/null)"
+  if led_legacy_conflict;then echo LED_COMPAT=CONFLICT_OLD_PLUGIN
+  elif led_supported;then echo LED_COMPAT=SUPPORTED
+  else echo LED_COMPAT=UNSUPPORTED;fi
+  echo LED_COLOR="$(cat "$LED_LAST" 2>/dev/null || echo OFF)"
+}
+led_config() {
+  case "$1" in
+    1)
+      # Do not use an unverified maximum-of-all-thermal-zones temperature for LEDs.
+      choice=$(cat "$ZONE" 2>/dev/null)
+      [ "$choice" != auto ] && valid_zone "$choice" || { echo LED_SELECT_CPU_ZONE_FIRST;return 1; }
+      led_legacy_conflict && { echo LED_CONFLICT_REMOVE_OLD_LED_PLUGIN_FIRST;return 1; }
+      led_supported || { echo LED_UNSUPPORTED_HARDWARE;return 1; }
+      valid_pid || { echo LED_START_MONITOR_FIRST;return 1; }
+      led_snapshot || { echo LED_CANNOT_BACKUP_BRIGHTNESS;return 1; }
+      echo 1 > "$LED_ON";echo LED_ENABLED;;
+    0)
+      echo 0 > "$LED_ON";led_restore;echo LED_DISABLED;;
+    *) echo LED_BAD_ARGUMENT;return 1;;
+  esac
+}
+
 read_temp() {
   choice=$(cat "$ZONE" 2>/dev/null)
   if [ "$choice" = auto ] || [ -z "$choice" ];then
@@ -548,7 +631,7 @@ run() {
   if valid_pid;then echo ALREADY_RUNNING;return 0;fi
   load_rules || { echo RULES_INVALID;return 1; }
   echo $$ > "$PID"
-  trap 'stats_save;rm -f "$PID"' EXIT
+  trap 'stats_save;led_restore;rm -f "$PID"' EXIT
   trap 'exit 0' INT TERM HUP
   stats_load
   LAST_MIN=-1;LAST_SAMP=0;LAST_STATS=0;LAST_SIG=0;LAST_FLOW=0;LAST_SEND=0;RISE_AT=0;RISE_START=0;RISE_ARMED=1
@@ -573,6 +656,7 @@ run() {
     [ "$t" -ge 70000 ] && D70=$((D70+dt))
     [ "$t" -ge 75000 ] && D75=$((D75+dt))
     write_history
+    led_apply || true
     [ "$t" -ge "$A" ] && { [ "$T1" -gt 0 ] || T1=$now; } || T1=0
     [ "$t" -ge "$B" ] && { [ "$T2" -gt 0 ] || T2=$now; } || T2=0
     [ "$t" -ge "$C" ] && { [ "$T3" -gt 0 ] || T3=$now; } || T3=0
@@ -641,7 +725,8 @@ probe_now() {
   status
 }
 status() {
-  echo VERSION=1.0
+  echo VERSION=1.1.0
+  led_status
   if [ -r "$REC" ];then
     IFS='|' read -r tag sample_ts remaining < "$REC"
     if is_int "$sample_ts" && [ "$sample_ts" -gt 0 ];then
@@ -668,6 +753,7 @@ status() {
 }
 case "$1" in
  scan) scan;; read) read_temp;; run) run;; start) start;; stop) stop;; status) status;; selftest) selftest;;
+ led_config) led_config "$2";; led_status) led_status;;
  boot) boot_on && echo BOOT_ENABLED;;
  history) tail -n 3000 "$HISTORY" 2>/dev/null || true;;
  signals) tail -n 3000 "$SIGNAL" 2>/dev/null || true;;
