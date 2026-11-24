@@ -106,7 +106,7 @@ led_cleanup_legacy() {
   pids=$(legacy_led_pids)
   for oldpid in $pids;do
     case "$oldpid" in ''|*[!0-9]*) continue;;esac
-    [ "$oldpid" = "$" ] && continue
+    [ "$oldpid" = "$$" ] && continue
     kill "$oldpid" 2>/dev/null || true
   done
   [ -z "$pids" ] || sleep 1
@@ -117,7 +117,7 @@ led_cleanup_legacy() {
     if [ ! -e "$backup" ];then
       cp "$BOOT" "$backup" && chmod 600 "$backup" || { echo LED_BOOT_BACKUP_FAILED;return 1; }
     fi
-    newboot="${BOOT}.f50-led-tmp.$"
+    newboot="${BOOT}.f50-led-tmp.$$"
     awk '$0 !~ /^[[:space:]]*sh[[:space:]]+\/data\/kano_temp_led[.]sh[[:space:]]*&?[[:space:]]*$/' "$BOOT" > "$newboot" ||
       { rm -f "$newboot";echo LED_BOOT_EDIT_FAILED;return 1; }
     mv "$newboot" "$BOOT" || { rm -f "$newboot";echo LED_BOOT_REPLACE_FAILED;return 1; }
