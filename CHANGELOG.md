@@ -2,6 +2,9 @@
 
 ## v2.0.0 — 2026-11-24 (stable edition)
 
+- Fix an accidental fixed PushPlus request body path `push_body.$.json`: the shell now uses its real process ID (`push_body.$.json`) to keep concurrent requests separate.
+
+
 - Document device compatibility with source-backed tiers; add expandable guidance to the UI. UFI-TOOLS framework support is explicitly not proof of plugin compatibility.
 
 

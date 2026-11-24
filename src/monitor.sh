@@ -332,7 +332,7 @@ push_send() {
   format=${3:-txt}
   case "$format" in txt|html) :;; *) return 1;; esac
   # Unique per-process payload avoids a race between manual and scheduled sends.
-  body_file="$BASE/push_body.$.json"
+  body_file="$BASE/push_body.$$.json"
   printf '{"token":"%s","title":"%s","content":"%s","template":"%s","channel":"wechat"}' "$t" "$title" "$msg" "$format" > "$body_file" || return 1
   chmod 600 "$body_file" 2>/dev/null || true
   response=$("$CURL" -sS --connect-timeout 5 --max-time 12 -X POST 'https://www.pushplus.plus/send' -H 'Content-Type: application/json' --data-binary @"$body_file" 2>/dev/null)
