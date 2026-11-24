@@ -1,5 +1,14 @@
 # Changelog / 更新日志
 
+## v2.0.1 — 2026-11-24 (quiet thermal notifications)
+
+- Permanently disable rapid temperature-rise (`RISING`) PushPlus alerts; normal startup warming no longer generates notices.
+- Enforce an absolute **50°C minimum** when queueing and sending temperature alerts; retain configurable sustained-heat thresholds (default 65/70/75°C).
+- Discard queued `RISING` messages left behind by earlier versions.
+- Remove the rising-rate UI option and make the legacy `rise` command return `RISE_DISABLED`.
+- Preserve weak RSRP alerts, daily reports, samples, history, optional LED control, and existing PushPlus configuration.
+- Source-level checks only; physical F50 validation still pending. Requires user-side plugin import and daemon upgrade.
+
 ## v2.0.0 — 2026-11-24 (stable edition)
 
 - Fix an accidental fixed PushPlus request body path `push_body.$.json`: the shell now uses its real process ID (`push_body.$.json`) to keep concurrent requests separate.

@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# F50 UFI-TOOLS v2.0.0: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
+# F50 UFI-TOOLS v2.0.1: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
 BASE=/data/local/tmp/f50_alert_v6
 BIN=$BASE/monitor.sh
 PID=$BASE/monitor.pid
@@ -9,7 +9,6 @@ TOKEN=$BASE/push.token
 PUSH=$BASE/push.on
 DAILY=$BASE/daily.on
 HOUR=$BASE/daily.hour
-RISE=$BASE/rise.milli_per_min
 LED_ON=$BASE/led.on
 LED_SNAPSHOT=$BASE/led.original
 LED_LAST=$BASE/led.last
@@ -46,7 +45,6 @@ mkdir -p "$BASE" || exit 1
 [ -r "$PUSH" ] || echo 0 > "$PUSH"
 [ -r "$DAILY" ] || echo 1 > "$DAILY"
 [ -r "$HOUR" ] || echo 22 > "$HOUR"
-[ -r "$RISE" ] || echo 1000 > "$RISE"
 [ -r "$LED_ON" ] || echo 0 > "$LED_ON"  # Default OFF; never alter hardware without consent
 chmod 700 "$BASE" 2>/dev/null || true
 
@@ -342,6 +340,11 @@ push_send() {
 queue_notice() {
   [ "$(cat "$PUSH" 2>/dev/null)" = 1 ] || return 0
   code=$1;body=$2;now=$(date +%s)
+  # Fast-rise warnings are disabled, and all thermal alerts require >= 50 C.
+  case "$code" in
+    RISING) return 0;;
+    WARN|HOT|CRITICAL) is_int "$t" && [ "$t" -ge 50000 ] || return 0;;
+  esac
   old=$(grep -F "$code " "$PUSH_SENT" 2>/dev/null | tail -n1 | awk '{print $2}')
   is_int "$old" || old=0
   case "$code" in DAILY_*) cooldown=0;; *) cooldown=1800;; esac
@@ -361,6 +364,19 @@ flush_notice() {
   [ $((now-${LAST_SEND:-0})) -ge 120 ] || return 0
   LAST_SEND=$now
   first=$(head -n1 "$QUEUE");kind=${first%%|*};msg=${first#*|}
+  # Never deliver old queued RISING; drop thermal notifications below 50 C.
+  case "$kind" in
+    RISING)
+      tail -n +2 "$QUEUE" > "$BASE/queue.tmp" && mv "$BASE/queue.tmp" "$QUEUE"
+      logit "PUSH_DROPPED_DISABLED_RISING";return 0;;
+    WARN|HOT|CRITICAL)
+      current_t=$(read_temp 2>/dev/null)
+      is_int "$current_t" || return 0
+      if [ "$current_t" -lt 50000 ];then
+        tail -n +2 "$QUEUE" > "$BASE/queue.tmp" && mv "$BASE/queue.tmp" "$QUEUE"
+        logit "PUSH_DROPPED_BELOW_50C $kind";return 0
+      fi;;
+  esac
   fmt=txt
   case "$kind" in DAILY_*) fmt=html;; esac
   if push_send "F50 $kind" "$msg" "$fmt";then
@@ -804,7 +820,7 @@ run() {
   trap 'stats_save;led_restore;rm -f "$PID"' EXIT
   trap 'exit 0' INT TERM HUP
   stats_load
-  LAST_MIN=-1;LAST_SAMP=0;LAST_STATS=0;LAST_SIG=0;LAST_FLOW=0;LAST_SEND=0;RISE_AT=0;RISE_START=0;RISE_ARMED=1;WEAK_SINCE=0;WEAK_RECOVER=0;WEAK_ARMED=1
+  LAST_MIN=-1;LAST_SAMP=0;LAST_STATS=0;LAST_SIG=0;LAST_FLOW=0;LAST_SEND=0;WEAK_SINCE=0;WEAK_RECOVER=0;WEAK_ARMED=1
   T1=0;T2=0;T3=0;ARM1=1;ARM2=1;ARM3=1;COOL_FROM=0
   LAST_CONF=''
   logit 'START MONITOR_ONLY no_shutdown no_data_toggle'
@@ -841,18 +857,6 @@ run() {
     held1=0;held2=0;held3=0
     [ "$T1" -eq 0 ] || held1=$((now-T1));[ "$T2" -eq 0 ] || held2=$((now-T2));[ "$T3" -eq 0 ] || held3=$((now-T3))
     printf 'OK|%s|%s|%s|%s|%s|%s\n' "$now" "$t" "$held1" "$held2" "$held3" "$tier" > "$REC"
-    # Five-minute slope; reset baseline every 5 minutes, suppress repeat until temp stabilizes.
-    [ "$RISE_AT" -gt 0 ] || { RISE_AT=$now;RISE_START=$t; }
-    if [ $((now-RISE_AT)) -ge 300 ];then
-      lim=$(cat "$RISE" 2>/dev/null);is_int "$lim" || lim=1000
-      delta=$((t-RISE_START));span=$((now-RISE_AT))
-      if [ "$delta" -ge $((lim*span/60)) ] && [ "$RISE_ARMED" -eq 1 ];then
-        queue_notice RISING "升温过快：最近 $((span/60)) 分钟升高约 $((delta/1000))℃，当前 $((t/1000))℃；请检查通风。"
-        RISE_ARMED=0;logit 'ALERT_FAST_RISE'
-      fi
-      [ "$delta" -le 0 ] && RISE_ARMED=1
-      RISE_AT=$now;RISE_START=$t
-    fi
     if [ $((now-LAST_SIG)) -ge 60 ];then
       LAST_SIG=$now;signal_probe
       check_weak_signal
@@ -948,7 +952,6 @@ case "$1" in
   [ -r "$QUEUE" ] && echo QUEUE="$(wc -l < "$QUEUE")" || echo QUEUE=0
   echo REPORT_HOUR="$(cat "$HOUR" 2>/dev/null)"
   echo REPORT_ON="$(cat "$DAILY" 2>/dev/null)"
-  echo RISE_LIMIT="$(cat "$RISE" 2>/dev/null)"
   :;;
  notify_config)
   case "$2" in 0|1) :;; *) echo BAD_PUSH_MODE;exit 1;; esac
@@ -971,9 +974,7 @@ case "$1" in
   msg=$(printf '%s' "$msg" | tr '\n' ' ')
   if push_send 'F50 当前健康报告' "$msg" html;then echo API_ACCEPTED_DELIVERY_UNCONFIRMED;else echo PUSH_FAILED;exit 1;fi;;
  report_preview) report_html "$STATS";;
- rise)
-  is_int "$2" && [ "$2" -ge 500 ] && [ "$2" -le 3000 ] || { echo BAD_RISE;exit 1; }
-  echo "$2" > "$RISE";echo RISE_SAVED;;
+ rise) echo RISE_DISABLED;;
  uninstall) stop;rm -rf "$BASE";echo REMOVED;;
  *) echo 'commands: start stop status read scan history signals health logs rules zone notify_config notify_test report_config report_now rise selftest boot uninstall';exit 2;;
 esac
