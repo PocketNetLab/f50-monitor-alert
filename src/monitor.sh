@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# F50 UFI-TOOLS v1.0 public release: telemetry and notifications ONLY. No power, radio, or connectivity controls.
+# F50 UFI-TOOLS v1.0.1 flow arithmetic hotfix: telemetry and notifications ONLY. No power, radio, or connectivity controls.
 BASE=/data/local/tmp/f50_alert_v6
 BIN=$BASE/monitor.sh
 PID=$BASE/monitor.pid
@@ -14,15 +14,16 @@ LOG=$BASE/events.log
 REC=$BASE/live
 HISTORY=$BASE/temperature.tsv
 SIGNAL=$BASE/signal.tsv
-# Compatibility: keeps previous flow_history.tsv and flow.state untouched as legacy records.
-# Both displayed time windows now use monitored increments from one consistent baseline.
-FLOWHIST=$BASE/flow_history_v65.tsv
+# Flow v1.0.1: preserve all older flow files, whose counters could overflow at 2^32.
+# A new baseline avoids a false 300+ GB jump when migrating to safe arithmetic.
+# Temperature, signal, settings and PushPlus configuration remain unchanged.
+FLOWHIST=$BASE/flow_history_v101.tsv
 STATS=$BASE/today.stats
 YDAY=$BASE/yesterday.stats
-FLOW=$BASE/flow_v65.state
-FLOWRAW=$BASE/flow_v65.native
-FLOWSINCE=$BASE/flow_v65.since
-FLOWQUALITY=$BASE/flow_v65.quality
+FLOW=$BASE/flow_v101.state
+FLOWRAW=$BASE/flow_v101.native
+FLOWSINCE=$BASE/flow_v101.since
+FLOWQUALITY=$BASE/flow_v101.quality
 QUEUE=$BASE/push.queue
 PUSH_SENT=$BASE/push.sent
 REPORT_MARK=$BASE/report.queued
@@ -40,6 +41,17 @@ mkdir -p "$BASE" || exit 1
 chmod 700 "$BASE" 2>/dev/null || true
 
 is_int() { case "$1" in ''|*[!0-9]*) return 1;; esac; return 0; }
+# Android 32-bit /system/bin/sh may wrap $((rx+tx)) at 2^32.
+# AWK arithmetic is floating-point with exact integer results for byte counters
+# up to 2^53 (9 PB); all F50 sampled byte values are well within this limit.
+bytes_add() {
+  awk -v a="$1" -v b="$2" 'BEGIN { if(a<0||b<0||a+b>9007199254740991) exit 1; printf "%.0f\n",a+b }'
+}
+bytes_sub() {
+  awk -v a="$1" -v b="$2" 'BEGIN { if(a<b||a<0||b<0) exit 1; printf "%.0f\n",a-b }'
+}
+bytes_lt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a<b) }'; }
+
 logit() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; n=$(wc -l < "$LOG" 2>/dev/null); [ "${n:-0}" -le 300 ] || { tail -n 240 "$LOG" > "$BASE/log.tmp" && mv "$BASE/log.tmp" "$LOG"; }; }
 valid_zone() { case "$1" in auto) return 0;; thermal_zone[0-9]*) idx=${1#thermal_zone};is_int "$idx" && [ -r "/sys/class/thermal/$1/temp" ];; *) return 1;; esac; }
 normalize() {
@@ -201,7 +213,8 @@ read_cellular_bytes() {
   rx=$(cat "/sys/class/net/$dev/statistics/rx_bytes" 2>/dev/null)
   tx=$(cat "/sys/class/net/$dev/statistics/tx_bytes" 2>/dev/null)
   is_int "$rx" && is_int "$tx" || { echo 'NA|NA';return; }
-  echo "$dev|$((rx+tx))"
+  total=$(bytes_add "$rx" "$tx") || { echo 'NA|NA';return; }
+  echo "$dev|$total"
 }
 # A consistent, conservative ledger. The modem's "monthly" absolute counter has
 # its own reset convention, so never compare it directly to sampled daily usage.
@@ -218,7 +231,7 @@ flow_update() {
     if is_int "$rx" && is_int "$tx";then source='goform_monthly';fi
   else source='goform_flux_monthly';fi
   if [ -n "$source" ];then
-    total=$((rx+tx));native=$total
+    total=$(bytes_add "$rx" "$tx") || { FLOW_DAY=-1;FLOW_MONTH=-1;FLOW_DEV=unavailable;echo UNSAFE_COUNTER > "$FLOWQUALITY";return 1; };native=$total
   else
     line=$(read_cellular_bytes);dev=${line%%|*};total=${line#*|}
     [ "$dev" != NA ] && is_int "$total" || { FLOW_DAY=-1;FLOW_MONTH=-1;FLOW_DEV=unavailable;echo UNAVAILABLE > "$FLOWQUALITY";return 1; }
@@ -238,10 +251,12 @@ flow_update() {
     elif [ "$prevmon" != "$nowmon" ];then quality=MONTH_BOUNDARY
     elif [ "$prevday" != "$nowday" ];then quality=DAY_BOUNDARY
     elif [ "$nowts" -le "$prevts" ];then quality=CLOCK_CHANGE
-    elif [ "$total" -lt "$prevtotal" ];then quality=COUNTER_RESET
+    elif bytes_lt "$total" "$prevtotal";then quality=COUNTER_RESET
     else
-      delta=$((total-prevtotal))
-      dd=$((dd+delta));mm=$((mm+delta));quality=OK
+      delta=$(bytes_sub "$total" "$prevtotal") || { echo BAD_DELTA > "$FLOWQUALITY";return 1; }
+      dd=$(bytes_add "$dd" "$delta") || { echo UNSAFE_DAY_TOTAL > "$FLOWQUALITY";return 1; }
+      mm=$(bytes_add "$mm" "$delta") || { echo UNSAFE_MONTH_TOTAL > "$FLOWQUALITY";return 1; }
+      quality=OK
       # For missing polling windows, the *total* is still known but hourly
       # attribution is unknown; avoid rendering a fake single-hour spike.
       if [ $((nowts-prevts)) -le 180 ];then
@@ -350,8 +365,8 @@ report_text() {
   av=$(awk -v a="$sum" -v b="$samp" 'BEGIN{printf "%.1f",a/b/1000}')
   ma=$(awk -v a="$mx" 'BEGIN{printf "%.1f",a/1000}')
   min=$(awk -v a="$mn" 'BEGIN{printf "%.1f",a/1000}')
-  if [ "$dyflow" -ge 0 ];then dy=$(awk -v a="$dyflow" 'BEGIN{printf "%.2f",a/1000000000}');else dy=不可用;fi
-  if [ "$monflow" -ge 0 ];then mo=$(awk -v a="$monflow" 'BEGIN{printf "%.2f",a/1000000000}');else mo=不可用;fi
+  if is_int "$dyflow";then dy=$(awk -v a="$dyflow" 'BEGIN{printf "%.2f",a/1000000000}');else dy=不可用;fi
+  if is_int "$monflow";then mo=$(awk -v a="$monflow" 'BEGIN{printf "%.2f",a/1000000000}');else mo=不可用;fi
   if [ "$sigcnt" -gt 0 ];then
     sr=$(awk -v a="$sigsum" -v b="$sigcnt" 'BEGIN{printf "%.1f",a/b}')
     if [ "$sinn" -gt 0 ];then si=$(awk -v a="$sinsum" -v b="$sinn" 'BEGIN{printf "%.1f",a/b}');else si=NA;fi
@@ -456,8 +471,8 @@ report_html() {
   av=$(awk -v a="$sum" -v b="$samp" 'BEGIN{printf "%.1f",a/b/1000}')
   ma=$(awk -v a="$mx" 'BEGIN{printf "%.1f",a/1000}')
   mi=$(awk -v a="$mn" 'BEGIN{printf "%.1f",a/1000}')
-  if [ "$dyflow" -ge 0 ];then dy=$(awk -v a="$dyflow" 'BEGIN{printf "%.2f",a/1000000000}')' GB';else dy='不可用';fi
-  if [ "$monflow" -ge 0 ];then mo=$(awk -v a="$monflow" 'BEGIN{printf "%.2f",a/1000000000}')' GB';else mo='不可用';fi
+  if is_int "$dyflow";then dy=$(awk -v a="$dyflow" 'BEGIN{printf "%.2f",a/1000000000}')' GB';else dy='不可用';fi
+  if is_int "$monflow";then mo=$(awk -v a="$monflow" 'BEGIN{printf "%.2f",a/1000000000}')' GB';else mo='不可用';fi
   if [ "$sigcnt" -gt 0 ];then
     sr=$(awk -v a="$sigsum" -v b="$sigcnt" 'BEGIN{printf "%.1f",a/b}')' dBm'
   else sr='不可用';fi
