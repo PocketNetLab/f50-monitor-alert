@@ -1,5 +1,17 @@
 # Changelog / 更新日志
 
+## v1.1.0 — 2026-11-24 (optional physical LED)
+
+- Add an **optional and default-off** thermal LED switch to the UFI-TOOLS dashboard.
+- **Below 55°C: white; 55–64.9°C: blue; at or above 65°C: red.**
+- Apply 1°C cooldown hysteresis: red to blue below 64°C, blue to white below 54°C.
+- Verify the selected CPU thermal zone before enabling; check F50 RGB LED sysfs support.
+- Block activation when the legacy U30/U20/F50 thermal LED plugin is detected.
+- On disable, attempt to restore the observed LED brightness.
+- Preserve existing temperature, traffic, signal and WeChat PushPlus monitoring; no shutdown/network-control behavior.
+- LED control currently has source-level and simulated checks, **not a verified real-device compatibility claim**.
+
+
 ## v1.0.1 — 2026-11-24 (bugfix)
 
 - Fix 32-bit Android Shell wraparound in large native flow counters (31x GB can become 1.88 GB).
