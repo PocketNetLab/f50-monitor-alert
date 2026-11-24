@@ -1,6 +1,6 @@
 # F50 Monitor & Alert · F50 设备监控与微信警报
 
-**v1.1.0 · Community Plugin for UFI-TOOLS · LED 温控灯 / Thermal LED**  
+**v1.1.1 · Community Plugin for UFI-TOOLS · 旧灯控残留清理 / Legacy LED Cleanup**  
 [中文说明](#中文介绍) · [English](#english-introduction) · [下载安装 / Download](#下载安装--installation) · [联系作者 / Contact](#作者与联系--author--contact)
 
 ## 中文介绍
@@ -79,9 +79,15 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 
 The physical LED controller is **opt-in and disabled by default**. Below 55°C = white, 55–64.9°C = blue, 65°C or higher = red, with 1°C cooling hysteresis. Requires supported LED sysfs nodes and access to the verified SoC thermal zone. Conflicting legacy thermal LED scripts block activation. No power or mobile-data actions are performed. Hardware compatibility remains to be verified.
 
+### v1.1.1 旧温控灯清理 / Legacy LED Cleanup
+
+**中文：** 如果已经从 UFI-TOOLS 插件列表删除了旧版 `U30 U20 F50 温控指示灯`，新版仍提示冲突，通常是旧脚本 `/data/kano_temp_led.sh` 或开机启动项残留。升级至 **v1.1.1** 后，在温控指示灯区点击 **「清理旧温控灯残留（仅旧脚本）」**，确认后会仅停止该旧脚本、删除其文件及匹配的启动命令。该操作不会删除温度、流量、信号、PushPlus 配置或其他启动行；遇到不符合预期的自定义启动命令会拒绝删除。接着选择并保存非自动 CPU 温区，勾选 **「启用实体 LED 温控灯」** 再点击 **「应用开关」**。
+
+**English:** After deleting the old thermal LED plugin entry, its background script or boot hook might remain. v1.1.1 adds an opt-in **“Clean up leftover thermal LED script”** action. It targets only the legacy file, its exact standalone boot command and matching script process; monitoring history and PushPlus settings are preserved. The script refuses ambiguous customized boot entries. Then select a verified CPU thermal zone, check the enable box and apply.
+
 ## 下载安装 / Installation
 
-**Plugin file:** [F50_Monitor_Alert_v1.1.0.txt](F50_Monitor_Alert_v1.1.0.txt)
+**Plugin file:** [F50_Monitor_Alert_v1.1.1.txt](F50_Monitor_Alert_v1.1.1.txt)
 
 1. 在 F50 的 UFI-TOOLS「插件功能」中导入上述 TXT 文件，提交并刷新页面。  
    In UFI-TOOLS → Plugins, import the TXT file, submit, then refresh the web page.
@@ -105,7 +111,7 @@ Existing test builds use `/data/local/tmp/f50_alert_v6` for compatibility. Do no
 
 ## 兼容性与限制 / Compatibility & Limitations
 
-- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.1.0 尚缺乏多设备、长期稳定性验证。  
+- 已在部分 ZTE F50 + UFI-TOOLS v4.1.5/v4.1.6 环境中验证过温度、流量和 RSRP 功能；公开 v1.1.1 尚缺乏多设备、长期稳定性验证。  
   Some functionality has been exercised on ZTE F50 with UFI-TOOLS v4.1.5/v4.1.6; extensive multi-device and long-duration validation is still pending.
 - `goform`、`ufi_req`、`zreq` 接口随固件可能变化。SINR 等参数可能缺失。  
   Firmware-dependent endpoints and radio measurements may be unavailable.
