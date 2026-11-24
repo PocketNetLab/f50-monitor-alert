@@ -58,7 +58,13 @@ function initF50MonitorV6(){
   const ov=document.createElement('div');ov.id='f50a6-overlay';ov.innerHTML=`<div id="f50a6-panel">
  <div class="header"><div><small>F50 · MONITOR + OPTIONAL LED</small><h2>设备状态与微信警报 v2.0.0</h2></div><button id="f50a6-close">关闭</button></div>
  <div class="line" style="margin-top:9px"><span class="tag">监测与可选温控灯 · 不自动关机 · 不切断移动数据</span><span id="f50a6-state" class="hint">未读取状态</span></div>
- <div class="metrics">
+ <div class="card"><details><summary style="cursor:pointer;color:#a6d8ef;font-weight:650">适用设备 · ZTE UFI 型号兼容说明（展开）</summary>
+<div class="hint"><b>主适配：</b>中兴 F50（MU300），v2.0.0 的完整实机验收仍待完成。</div>
+<div class="hint"><b>插件待验证候选：</b>中兴 U30 Air、V50、M3（部分固件）、F50 Pro（MU3356，仅有 UFI-TOOLS 社区运行案例）；飞猫 U20 仅限 F50 固件形态。</div>
+<div class="hint"><b>不在支持范围：</b>U50 Pro、U60 Pro（ZWRT 接口不同）；U30 Pro 不等于 U30 Air，未纳入候选。</div>
+<div class="hint"><b>运行环境：</b>在设备本机部署 UFI-TOOLS Full（完整版），启用高级功能 / Root Shell。仅用手机端 PE 不够。其他型号的温度、流量、RSRP 均需单独验证；非 F50 型号请勿启用实体 LED。<a href="https://github.com/PocketNetLab/f50-monitor-alert/blob/main/docs/COMPATIBILITY.md" target="_blank" rel="noopener noreferrer" style="color:#7cdacc">详细适配矩阵</a></div>
+</details></div>
+<div class="metrics">
   <div class="metric"><span class="k">SoC/选定温区</span><span class="v" id="f50a6-temp">--℃</span></div>
   <div class="metric"><span class="k">今日监控增量</span><span class="v" id="f50a6-day">-- GB</span></div>
   <div class="metric"><span class="k">本月监控增量</span><span class="v" id="f50a6-month">-- GB</span></div>

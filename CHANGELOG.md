@@ -2,6 +2,9 @@
 
 ## v2.0.0 — 2026-11-24 (stable edition)
 
+- Document device compatibility with source-backed tiers; add expandable guidance to the UI. UFI-TOOLS framework support is explicitly not proof of plugin compatibility.
+
+
 - Upgrade the user-supplied v1.2.2 UFI-TOOLS plugin to 2.0.0 with backward-compatible state paths.
 - Preserve cumulative daily traffic and fixed-axis temperature/RSRP charts; omit unavailable SINR.
 - Add a PushPlus weak-signal warning for RSRP ≤ -105 dBm sustained five minutes, re-armed after ≥ -100 dBm for three minutes.

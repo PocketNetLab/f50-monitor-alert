@@ -4,6 +4,26 @@
 [中文说明](#中文介绍) · [English](#english-introduction) · [下载安装 / Download](#下载安装--installation) · [联系作者 / Contact](#作者与联系--author--contact)
 
 
+## 中兴 UFI-TOOLS 适用机型 / Model compatibility
+
+> **框架支持不等于插件已通过测试。** 本插件非 UFI-TOOLS 官方组件，以下“UFI-TOOLS 支持”依据的是上游文档或社区个案。
+
+| 设备 | UFI-TOOLS 证据 | 本插件 v2.0.0 |
+| --- | --- | --- |
+| **中兴 F50（MU300）** | 上游主要适配设备 | **主要适配目标**；完整实机验收仍待完成 |
+| **中兴 U30 Air** | 上游主要适配设备 | **待验证候选** |
+| **中兴 V50** | 上游 User_Doc 列出 | **待验证候选** |
+| **飞猫 U20（F50 固件形态）** | 上游有条件列出 | **条件候选，未验证** |
+| **中兴 M3（部分固件）** | 上游有条件列出 | **条件候选，未验证** |
+| **中兴 F50 Pro（MU3356）** | 社区 B28 / Android 15 / UFI-TOOLS v4.0.0 部署案例 | **实验性候选，未验证** |
+| **中兴 U30 Pro** | 不等于 U30 Air | **未列入候选** |
+| **中兴 U50 Pro / U60 Pro** | 上游维护者确认 ZWRT 的接口与 F50/U30 不同 | **不支持** |
+| **其他中兴 Android 手机、平板** | 部分可运行 UFI-TOOLS | **不属于本插件目标范围** |
+
+**所需 UFI-TOOLS：设备端 Full（完整版）+ 高级功能 / Root Shell。** 仅装在手机上的 PE 版不满足后台守护运行条件。原厂流量和 RSRP 接口为 F50 的 GoForm；温区编号依固件而定；LED 实现为 F50 的 `sc27xx` 路径。**其他机型不得启用实体温控灯，也不能默认原厂流量与 RSRP 可读。**
+
+[详细机型矩阵、接口清单与验证步骤](docs/COMPATIBILITY.md) · [UFI-TOOLS 上游说明](https://github.com/kanoqwq/UFI-TOOLS) · [上游机型文档](https://github.com/kanoqwq/UFI-TOOLS/blob/http-server-version/User_Doc.md)
+
 ## v2.0.0 正式版 / Stable Release
 
 **新安装默认 22:00 推送当日统计**（升级保留原时间和 PushPlus Token）。RSRP 连续五分钟 ≤ -105 dBm 才发弱信号提醒，信号连续三分钟 ≥ -100 dBm 才重新布防。提供温度、累计流量、RSRP 三条折线趋势；左侧纵轴固定，缺失采样不填充。
