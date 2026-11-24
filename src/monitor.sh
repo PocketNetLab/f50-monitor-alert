@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# F50 UFI-TOOLS v1.1.1: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
+# F50 UFI-TOOLS v2.0.0: monitoring, PushPlus and OPTIONAL thermal LED. Never control power, radio or connectivity.
 BASE=/data/local/tmp/f50_alert_v6
 BIN=$BASE/monitor.sh
 PID=$BASE/monitor.pid
@@ -17,6 +17,8 @@ LED_RED=/sys/class/leds/sc27xx:red/brightness
 LED_WHITE=/sys/class/leds/sc27xx:green/brightness
 LED_BLUE=/sys/class/leds/sc27xx:blue/brightness
 LED_BRIGHT=96
+LED_REBOOT=$BASE/led.reboot_required
+LED_TEST=$BASE/led.manual_test
 LOG=$BASE/events.log
 REC=$BASE/live
 HISTORY=$BASE/temperature.tsv
@@ -43,7 +45,7 @@ mkdir -p "$BASE" || exit 1
 [ -r "$ZONE" ] || echo auto > "$ZONE"
 [ -r "$PUSH" ] || echo 0 > "$PUSH"
 [ -r "$DAILY" ] || echo 1 > "$DAILY"
-[ -r "$HOUR" ] || echo 08 > "$HOUR"
+[ -r "$HOUR" ] || echo 22 > "$HOUR"
 [ -r "$RISE" ] || echo 1000 > "$RISE"
 [ -r "$LED_ON" ] || echo 0 > "$LED_ON"  # Default OFF; never alter hardware without consent
 chmod 700 "$BASE" 2>/dev/null || true
@@ -83,35 +85,43 @@ led_legacy_conflict() {
   if [ -r "$BOOT" ] && grep -Fq 'kano_temp_led.sh' "$BOOT";then return 0;fi
   return 1
 }
-# Strictly match argv to avoid killing unrelated processes or grep/shell commands.
-legacy_led_pids() {
-  for p in /proc/[0-9]*;do
-    [ -r "$p/cmdline" ] || continue
-    if tr '\000' '\n' < "$p/cmdline" 2>/dev/null | grep -Fxq '/data/kano_temp_led.sh';then
-      echo "${p##*/}"
-    fi
-  done
+# Do not terminate processes through the Root Shell HTTP request.
+# The old LED daemon could be running under a shared UFI-TOOLS shell; a kill or
+# scanning every /proc PID has caused some device-side requests to abort.
+# Remove only the old independent script and the exact boot command, then reboot.
+led_boot_tag() {
+  if [ -r /proc/sys/kernel/random/boot_id ];then
+    cat /proc/sys/kernel/random/boot_id 2>/dev/null
+  else
+    awk '/^btime / {print "boot-"$2;exit}' /proc/stat 2>/dev/null
+  fi
+}
+led_reboot_pending() {
+  [ -r "$LED_REBOOT" ] || return 1
+  saved=$(cat "$LED_REBOOT" 2>/dev/null)
+  current=$(led_boot_tag)
+  if [ -n "$current" ] && [ "$saved" != "$current" ];then
+    rm -f "$LED_REBOOT"
+    return 1
+  fi
+  return 0
 }
 led_cleanup_legacy() {
-  # Opt-in maintenance only: no traffic, temperature, modem, or PushPlus data touched.
-  [ ! -L /data/kano_temp_led.sh ] || { echo LED_LEGACY_SYMLINK_REFUSED;return 1; }
+  # Explicit user action; no other plugin's data, processes, or network settings touched.
+  old=/data/kano_temp_led.sh
+  [ ! -L "$old" ] || { echo LED_LEGACY_SYMLINK_REFUSED;return 1; }
+  tag=$(led_boot_tag)
+  [ -n "$tag" ] || { echo LED_BOOT_ID_UNAVAILABLE;return 1; }
   if [ -e "$BOOT" ];then
+    [ ! -L "$BOOT" ] || { echo LED_BOOT_SYMLINK_REFUSED;return 1; }
     [ -f "$BOOT" ] && [ -r "$BOOT" ] && [ -w "$BOOT" ] || { echo LED_BOOT_NOT_WRITABLE;return 1; }
-    # Only the standalone command installed by the historical third-party plugin may be removed.
+    # Refuse to remove custom commands which mention the old script.
     awk 'index($0,"kano_temp_led.sh") && $0 !~ /^[[:space:]]*sh[[:space:]]+\/data\/kano_temp_led[.]sh[[:space:]]*&?[[:space:]]*$/ {bad=1} END{exit bad?1:0}' "$BOOT" ||
       { echo LED_BOOT_CUSTOM_LINE_REFUSED;return 1; }
   fi
   echo 0 > "$LED_ON"
   led_restore
-  pids=$(legacy_led_pids)
-  for oldpid in $pids;do
-    case "$oldpid" in ''|*[!0-9]*) continue;;esac
-    [ "$oldpid" = "$$" ] && continue
-    kill "$oldpid" 2>/dev/null || true
-  done
-  [ -z "$pids" ] || sleep 1
-  still=$(legacy_led_pids)
-  [ -z "$still" ] || { echo LED_LEGACY_PROCESS_STILL_RUNNING;return 1; }
+  # No kill, no /proc scans. Running legacy script can still be active until reboot.
   if [ -r "$BOOT" ] && grep -Fq 'kano_temp_led.sh' "$BOOT";then
     backup="$BASE/ufi_tools_boot_before_led_cleanup.bak"
     if [ ! -e "$backup" ];then
@@ -122,12 +132,13 @@ led_cleanup_legacy() {
       { rm -f "$newboot";echo LED_BOOT_EDIT_FAILED;return 1; }
     mv "$newboot" "$BOOT" || { rm -f "$newboot";echo LED_BOOT_REPLACE_FAILED;return 1; }
   fi
-  if [ -f /data/kano_temp_led.sh ];then
-    rm -f /data/kano_temp_led.sh || { echo LED_LEGACY_FILE_DELETE_FAILED;return 1; }
+  if [ -f "$old" ];then
+    rm -f "$old" || { echo LED_LEGACY_FILE_DELETE_FAILED;return 1; }
   fi
   led_legacy_conflict && { echo LED_LEGACY_REMAINS;return 1; }
-  logit 'LED_LEGACY_CLEANED only old LED script and boot entry, all monitoring data preserved'
-  echo LED_LEGACY_CLEANED
+  printf '%s\n' "$tag" > "$LED_REBOOT" || { echo LED_REBOOT_MARKER_FAILED;return 1; }
+  logit 'LED_LEGACY_REMOVED reboot required; no process killed; monitoring retained'
+  echo LED_LEGACY_CLEANED_REBOOT_REQUIRED
 }
 led_snapshot() {
   [ -r "$LED_SNAPSHOT" ] && return 0
@@ -135,8 +146,15 @@ led_snapshot() {
   for v in "$r" "$w" "$b";do is_int "$v" && [ "$v" -le 255 ] || return 1;done
   printf '%s %s %s\n' "$r" "$w" "$b" > "$LED_SNAPSHOT"
 }
+# Write all 3 channels; Android sysfs can report a nonzero write code while
+# /brightness readback equals the requested value. Do not interpret that alone
+# as a failed transition. All channels are attempted even after a mismatch.
 led_write() {
-  printf '%s\n' "$1" > "$LED_RED" && printf '%s\n' "$2" > "$LED_WHITE" && printf '%s\n' "$3" > "$LED_BLUE"
+  led_result=0
+  led_diag_write "$LED_RED" "$1" RED >/dev/null || led_result=1
+  led_diag_write "$LED_WHITE" "$2" WHITE >/dev/null || led_result=1
+  led_diag_write "$LED_BLUE" "$3" BLUE >/dev/null || led_result=1
+  return "$led_result"
 }
 led_restore() {
   # Restore the observed LED state; it may be superseded by normal firmware control.
@@ -144,7 +162,61 @@ led_restore() {
     read -r r w b < "$LED_SNAPSHOT"
     led_write "$r" "$w" "$b" >/dev/null 2>&1 || true
   fi
-  rm -f "$LED_SNAPSHOT" "$LED_LAST"
+  rm -f "$LED_SNAPSHOT" "$LED_LAST" "$LED_TEST"
+}
+# Manual single-color diagnostic at 255 (matches the original Kano v1.4 driver).
+# User must disable automatic control; no background process or timed sleep.
+# Capture and preserve original brightness across WHITE/BLUE/RED tests.
+led_diag_write() {
+  diag_path=$1;diag_val=$2;diag_name=$3
+  diag_error=$(printf '%s\n' "$diag_val" > "$diag_path" 2>&1)
+  diag_code=$?
+  diag_back=$(cat "$diag_path" 2>/dev/null)
+  [ -n "$diag_back" ] || diag_back=NA
+  # The F50 LED driver can return code 1 despite applying the brightness.
+  # Prefer verified readback, while keeping the driver warning visible.
+  if [ "$diag_back" = "$diag_val" ];then
+    if [ "$diag_code" -eq 0 ];then
+      printf 'LED_%s_WRITE=OK,readback=%s,target=%s\n' "$diag_name" "$diag_back" "$diag_val"
+    else
+      printf 'LED_%s_WRITE=READBACK_OK_DRIVER_WARNING,code=%s,readback=%s,target=%s\n' "$diag_name" "$diag_code" "$diag_back" "$diag_val"
+    fi
+    return 0
+  fi
+  diag_error=$(printf '%s' "$diag_error" | tr '\r\n|' '   ' | cut -c1-100)
+  printf 'LED_%s_WRITE=FAILED,code=%s,readback=%s,target=%s,error=%s\n' "$diag_name" "$diag_code" "$diag_back" "$diag_val" "$diag_error"
+  return 1
+}
+led_test_color() {
+  [ "$(cat "$LED_ON" 2>/dev/null)" = 0 ] || { echo LED_TEST_DISABLE_AUTO_FIRST;return 1; }
+  led_legacy_conflict && { echo LED_TEST_LEGACY_CONFLICT;return 1; }
+  led_reboot_pending && { echo LED_TEST_REBOOT_REQUIRED;return 1; }
+  led_supported || { echo LED_TEST_SYSFS_UNAVAILABLE;return 1; }
+  case "$1" in
+    WHITE) lr=0;lw=255;lb=0;;
+    BLUE) lr=0;lw=0;lb=255;;
+    RED) lr=255;lw=0;lb=0;;
+    *) echo LED_TEST_BAD_COLOR;return 1;;
+  esac
+  led_snapshot || { echo LED_TEST_BACKUP_FAILED;return 1; }
+  # Write each channel even if another channel fails; return each result.
+  err=0
+  led_diag_write "$LED_RED" "$lr" RED || err=1
+  led_diag_write "$LED_WHITE" "$lw" WHITE || err=1
+  led_diag_write "$LED_BLUE" "$lb" BLUE || err=1
+  if [ "$err" -ne 0 ];then
+    led_restore
+    echo LED_TEST_FAILED_ORIGINAL_RESTORE_ATTEMPTED
+    return 1
+  fi
+  printf '%s\n' "$1" > "$LED_TEST"
+  echo LED_TEST_APPLIED_READBACK_OK
+  echo LED_TEST_NOTE=PHYSICAL_COLOR_MUST_BE_CHECKED_USE_RESTORE_WHEN_DONE
+}
+led_test_restore() {
+  [ "$(cat "$LED_ON" 2>/dev/null)" = 0 ] || { echo LED_TEST_DISABLE_AUTO_FIRST;return 1; }
+  led_restore
+  echo LED_TEST_RESTORE_ATTEMPTED
 }
 led_apply() {
   [ "$(cat "$LED_ON" 2>/dev/null)" = 1 ] || return 0
@@ -170,9 +242,11 @@ led_apply() {
 led_status() {
   echo LED_ON="$(cat "$LED_ON" 2>/dev/null)"
   if led_legacy_conflict;then echo LED_COMPAT=CONFLICT_OLD_PLUGIN
+  elif led_reboot_pending;then echo LED_COMPAT=REBOOT_REQUIRED
   elif led_supported;then echo LED_COMPAT=SUPPORTED
   else echo LED_COMPAT=UNSUPPORTED;fi
   echo LED_COLOR="$(cat "$LED_LAST" 2>/dev/null || echo OFF)"
+  echo LED_TEST="$(cat "$LED_TEST" 2>/dev/null || echo NONE)"
 }
 led_config() {
   case "$1" in
@@ -181,7 +255,8 @@ led_config() {
       choice=$(cat "$ZONE" 2>/dev/null)
       [ "$choice" != auto ] && valid_zone "$choice" || { echo LED_SELECT_CPU_ZONE_FIRST;return 1; }
       led_legacy_conflict && { echo LED_CONFLICT_REMOVE_OLD_LED_PLUGIN_FIRST;return 1; }
-      [ -z "$(legacy_led_pids)" ] || { echo LED_CONFLICT_OLD_PROCESS_RUNNING;return 1; }
+      led_reboot_pending && { echo LED_REBOOT_REQUIRED;return 1; }
+      [ ! -r "$LED_TEST" ] || { echo LED_TEST_RESTORE_FIRST;return 1; }
       led_supported || { echo LED_UNSUPPORTED_HARDWARE;return 1; }
       valid_pid || { echo LED_START_MONITOR_FIRST;return 1; }
       led_snapshot || { echo LED_CANNOT_BACKUP_BRIGHTNESS;return 1; }
@@ -256,10 +331,12 @@ push_send() {
   title=$(json_escape "$1");msg=$(json_escape "$2")
   format=${3:-txt}
   case "$format" in txt|html) :;; *) return 1;; esac
-  printf '{"token":"%s","title":"%s","content":"%s","template":"%s","channel":"wechat"}' "$t" "$title" "$msg" "$format" > "$BASE/push_body.json" || return 1
-  chmod 600 "$BASE/push_body.json" 2>/dev/null || true
-  response=$("$CURL" -sS --connect-timeout 5 --max-time 12 -X POST 'https://www.pushplus.plus/send' -H 'Content-Type: application/json' --data-binary @"$BASE/push_body.json" 2>/dev/null)
-  rm -f "$BASE/push_body.json"
+  # Unique per-process payload avoids a race between manual and scheduled sends.
+  body_file="$BASE/push_body.$.json"
+  printf '{"token":"%s","title":"%s","content":"%s","template":"%s","channel":"wechat"}' "$t" "$title" "$msg" "$format" > "$body_file" || return 1
+  chmod 600 "$body_file" 2>/dev/null || true
+  response=$("$CURL" -sS --connect-timeout 5 --max-time 12 -X POST 'https://www.pushplus.plus/send' -H 'Content-Type: application/json' --data-binary @"$body_file" 2>/dev/null)
+  rm -f "$body_file"
   case "$response" in *'"code":200'*|*'"code": 200'*) return 0;; *) return 1;; esac
 }
 queue_notice() {
@@ -354,7 +431,7 @@ read_cellular_bytes() {
 flow_update() {
   nowday=$(date +%Y%m%d);nowmon=$(date +%Y%m);nowts=$(date +%s)
   source='';total='';native=NA
-  gojson=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type,Z5g_SINR,lte_snr,network_sinr')
+  gojson=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type')
   rx=$(json_number flux_monthly_rx_bytes "$gojson");tx=$(json_number flux_monthly_tx_bytes "$gojson")
   if ! is_int "$rx" || ! is_int "$tx";then
     rx=$(json_number monthly_rx_bytes "$gojson");tx=$(json_number monthly_tx_bytes "$gojson")
@@ -415,27 +492,14 @@ flow_update() {
 signal_probe() {
   # In particular, do NOT request nr_rsrp/nr_rsrq/Nr_snr together with network_information:
   # certain F50 firmwares blank network_information fields when doing so.
-  raw=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type,Z5g_SINR,lte_snr,network_sinr')
+  raw=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type')
   rsrp=$(json_number Z5g_rsrp "$raw")
   awk -v x="$rsrp" 'BEGIN{exit !(x>=-140 && x<=-40)}' || rsrp=''
   [ -n "$rsrp" ] || rsrp=$(json_number lte_rsrp "$raw")
-  sinr=$(json_number Z5g_SINR "$raw")
-  [ -n "$sinr" ] || sinr=$(json_number lte_snr "$raw")
-  [ -n "$sinr" ] || sinr=$(json_number network_sinr "$raw")
-  # Some F50 firmware stores NR metrics inside network_information, using
-  # alternate spellings. No explicit nr_rsrp/Nr_snr request (may clear dump).
-  if [ -z "$sinr" ];then
-    dump=$(goform_fetch 'network_information')
-    for k in Z5g_snr Nr_snr nr_sinr nrsinr Z_SINR lte_sinr LTE_SINR SINR;do
-      sinr=$(json_number "$k" "$dump")
-      [ -n "$sinr" ] && break
-    done
-  fi
-  # Some modems express SINR in tenths of a dB; reject unrecognized ranges.
+  # Keep NA in the existing third column so old signal history remains readable.
   rsrp=$(awk -v x="$rsrp" 'BEGIN{if(x ~ /^-[0-9]+(\.[0-9]+)?$/ && x>=-140 && x<=-40)printf "%.0f",x;else print "NA"}')
-  sinr=$(awk -v x="$sinr" 'BEGIN{if(x !~ /^-?[0-9]+(\.[0-9]+)?$/)print "NA";else if(x>=-40 && x<=40)printf "%.0f",x;else if(x>40 && x<=400)printf "%.0f",x/10;else print "NA"}')
-  SIGNAL_RSRP=$rsrp;SIGNAL_SINR=$sinr
-  printf '%s|%s|%s|%s\n' "$(date +%s)" "$rsrp" "$sinr" "${t:-0}" >> "$SIGNAL"
+  SIGNAL_RSRP=$rsrp
+  printf '%s|%s|NA|%s\n' "$(date +%s)" "$rsrp" "${t:-0}" >> "$SIGNAL"
   n=$(wc -l < "$SIGNAL" 2>/dev/null)
   [ "${n:-0}" -le 3100 ] || { tail -n 3000 "$SIGNAL" > "$BASE/signal.tmp" && mv "$BASE/signal.tmp" "$SIGNAL"; }
 }
@@ -443,17 +507,17 @@ telemetry_diag() {
   # Only signal/traffic counters, never IMEI, SIM identifiers or token.
   [ -x "$UFI_BIN" ] && echo UFI_REQ=PRESENT || echo UFI_REQ=MISSING
   [ -x "$ZTE_BIN" ] && echo ZREQ=PRESENT || echo ZREQ=MISSING
-  g=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type,Z5g_SINR,lte_snr,network_sinr')
+  g=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type')
   if [ -n "$g" ];then
     echo 'GOFORM=OK'
     for k in flux_monthly_rx_bytes flux_monthly_tx_bytes monthly_rx_bytes monthly_tx_bytes;do
       x=$(json_number "$k" "$g");echo "${k}=${x:-NA}"
     done
   else echo 'GOFORM=UNAVAILABLE';fi
-  s=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type,Z5g_SINR,lte_snr,network_sinr')
+  s=$(goform_fetch 'monthly_rx_bytes,monthly_tx_bytes,Z5g_rsrp,lte_rsrp,network_information,network_type')
   if [ -n "$s" ];then
     echo 'RADIO_API=OK'
-    for k in Z5g_rsrp lte_rsrp Z5g_SINR lte_snr network_sinr network_signalbar;do
+    for k in Z5g_rsrp lte_rsrp network_signalbar;do
       x=$(json_number "$k" "$s");echo "${k}=${x:-NA}"
     done
   else echo 'RADIO_API=UNAVAILABLE';fi
@@ -483,7 +547,7 @@ stats_save() {
 }
 stats_summary() {
   [ -r "$1" ] || { echo NONE;return; }
-  awk '{if($2>0){printf "DATE=%s SAMPLES=%d MAX=%.1f AVG=%.1f MIN=%.1f OVER60=%d OVER65=%d OVER70=%d OVER75=%d SIGNALN=%d RSRP_AVG=%s SINR_AVG=%s WEAK=%d STRONG=%d FLOW_DAY=%.0f FLOW_MON=%.0f\n",$1,$2,$4/1000,$3/$2/1000,$5/1000,$6,$7,$8,$9,$10,($10>0?sprintf("%.1f",$11/$10):"NA"),($12>0?sprintf("%.1f",$13/$12):"NA"),$14,$15,$16,$17}else print "NONE"}' "$1"
+  awk '{if($2>0){printf "DATE=%s SAMPLES=%d MAX=%.1f AVG=%.1f MIN=%.1f OVER60=%d OVER65=%d OVER70=%d OVER75=%d SIGNALN=%d RSRP_AVG=%s WEAK=%d STRONG=%d FLOW_DAY=%.0f FLOW_MON=%.0f\n",$1,$2,$4/1000,$3/$2/1000,$5/1000,$6,$7,$8,$9,$10,($10>0?sprintf("%.1f",$11/$10):"NA"),$14,$15,$16,$17}else print "NONE"}' "$1"
 }
 report_text() {
   f=$1;[ -r "$f" ] || return 1
@@ -499,9 +563,8 @@ report_text() {
   if is_int "$monflow";then mo=$(awk -v a="$monflow" 'BEGIN{printf "%.2f",a/1000000000}');else mo=不可用;fi
   if [ "$sigcnt" -gt 0 ];then
     sr=$(awk -v a="$sigsum" -v b="$sigcnt" 'BEGIN{printf "%.1f",a/b}')
-    if [ "$sinn" -gt 0 ];then si=$(awk -v a="$sinsum" -v b="$sinn" 'BEGIN{printf "%.1f",a/b}');else si=NA;fi
-    sig="平均RSRP $sr dBm；平均SINR $si dB；弱信号样本 $weak/$sigcnt"
-  else sig='RSRP/SINR不可用';fi
+    sig="平均RSRP $sr dBm；弱信号样本 $weak/$sigcnt"
+  else sig='RSRP不可用';fi
   printf '日期：%s\n温度最高/平均/最低：%s/%s/%s ℃\n高于60/65/70/75℃累计：%s/%s/%s/%s 分钟\n蜂窝流量今日/本月监控增量（升级后累计）：%s/%s GB\n信号统计：%s\n当前为纯提醒模式：不自动关机或断网。\n' "$d" "$ma" "$av" "$min" "$((s60/60))" "$((s65/60))" "$((s70/60))" "$((s75/60))" "$dy" "$mo" "$sig"
 }
 
@@ -530,9 +593,9 @@ svg_temp() {
     for(i=0;i<288;i++)if(n[i]>0){x=L+i/287*pw;y=T+ph-(a[i]-lo)*ph/(hi-lo);d=d (first<0?"M":"L") sprintf("%.1f,%.1f ",x,y);if(first<0)first=x;last=x}
     printf "<path d=\"%sL%.1f,%d L%.1f,%d Z\" fill=\"url(#f50tv6)\"/>",d,last,T+ph,first,T+ph
     printf "<path d=\"%s\" fill=\"none\" stroke=\"#66ebd7\" stroke-width=\"2.3\" stroke-linejoin=\"round\"/>\n",d
-    for(hour=0;hour<24;hour++){
+    for(hour=0;hour<24;hour+=3){
       ax=47+(hour+0.5)*559/24
-      printf "<text x=\"%.1f\" y=\"234\" font-size=\"8\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d点</text>",ax,hour
+      printf "<text x=\"%.1f\" y=\"234\" font-size=\"10\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d:00</text>",ax,hour
     }
     printf "<text x=\"605\" y=\"17\" text-anchor=\"end\" font-size=\"10\" fill=\"#97e9d9\">最低 %.1f° · 最高 %.1f°</text>",vmin,vmax
     print "</svg>"
@@ -541,21 +604,57 @@ svg_temp() {
 svg_flow() {
   from=$1;to=$2
   [ -s "$FLOWHIST" ] || return 1
+  # The 3rd TSV column is the already-recorded daily cumulative byte counter.
+  # Prefer that source over summing hourly attributed deltas, which deliberately
+  # omit unknown polling gaps. Never fabricate missing-hour traffic.
   awk -F'|' -v s="$from" -v e="$to" '
-  $1>=s && $1<e && $2>=0 {i=int(($1-s)/3600);if(i>=0&&i<24){v[i]+=$2/1000000;n[i]++}}
-  END{
-    c=0;mx=0;for(i=0;i<24;i++)if(n[i]>0){c++;if(v[i]>mx)mx=v[i]}
-    if(!c)exit
-    if(mx<1)mx=1
-    print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" viewBox=\"0 0 620 190\" style=\"max-width:620px;border-radius:12px;background:#0d192d\">"
-    print "<text x=\"17\" y=\"17\" fill=\"#edf7ff\" font-size=\"12\" font-weight=\"bold\">F50 蜂窝流量 · 每小时增量（MB）</text>"
-    for(i=0;i<=3;i++){y=162-i*38;printf "<path d=\"M45 %d H606\" stroke=\"#28405b\" stroke-width=\".7\"/>\n",y}
-    for(i=0;i<24;i++){h=v[i]/mx*112;x=49+i*23; if(h>0)printf "<rect x=\"%.0f\" y=\"%.1f\" width=\"15\" height=\"%.1f\" rx=\"3\" fill=\"#48bdf2\"/>\n",x,162-h,h}
-    for(hour=0;hour<24;hour++){
-      ax=45+(hour+0.5)*561/24
-      printf "<text x=\"%.1f\" y=\"181\" font-size=\"8\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d点</text>",ax,hour
+  $1>=s && $1<e && $3 ~ /^[0-9]+$/ {
+    i=int(($1-s)/3600)
+    if(i>=0&&i<24){
+      if(!(i in seen) || $1>=lastts[i]){
+        raw[i]=$3+0;lastts[i]=$1;seen[i]=1
+      }
     }
-    printf "<text x=\"606\" y=\"17\" text-anchor=\"end\" fill=\"#b4dff5\" font-size=\"10\">峰值 %.1f MB/h</text>",mx
+  }
+  END{
+    n=0;maxbytes=0;first=-1;last=-1
+    for(i=0;i<24;i++)if(seen[i]){
+      n++;if(first<0)first=i;last=i
+      if(raw[i]>maxbytes)maxbytes=raw[i]
+    }
+    if(n<1)exit
+    unit=(maxbytes>=1000000000?"GB":"MB")
+    scale=(unit=="GB"?1000000000:1000000)
+    maxv=maxbytes/scale
+    ceiling=(maxv>0?maxv*1.10:1)
+    W=620;H=220;L=52;R=16;T=29;B=35;pw=W-L-R;ph=H-T-B
+    print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" viewBox=\"0 0 620 220\" style=\"max-width:620px;border-radius:12px;background:#0d192d\">"
+    print "<text x=\"17\" y=\"17\" fill=\"#edf7ff\" font-size=\"12\" font-weight=\"bold\">F50 蜂窝流量 · 当日累计（" unit "）</text>"
+    printf "<text x=\"605\" y=\"17\" text-anchor=\"end\" fill=\"#a8e4ff\" font-size=\"10\">最新 %.2f %s</text>",raw[last]/scale,unit
+    for(j=0;j<=4;j++){
+      y=T+ph-j*ph/4;v=ceiling*j/4
+      printf "<path d=\"M%d %.1f H%d\" stroke=\"#28405b\" stroke-width=\".7\"/>",L,y,W-R
+      printf "<text x=\"%d\" y=\"%.1f\" text-anchor=\"end\" fill=\"#a9bfd5\" font-size=\"10\">%.1f</text>",L-6,y+3,v
+    }
+    d="";prev=-2
+    for(i=0;i<24;i++)if(seen[i]){
+      x=L+(i+.5)*pw/24
+      y=T+ph-(raw[i]/scale)/ceiling*ph
+      # Missing hours break the path instead of inventing observations.
+      d=d (prev==i-1?"L":"M") sprintf("%.1f,%.1f ",x,y)
+      prev=i
+      if(i==last){lastx=x;lasty=y}
+    }
+    printf "<path d=\"%s\" fill=\"none\" stroke=\"#5fcaf0\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",d
+    for(i=0;i<24;i++)if(seen[i]){
+      x=L+(i+.5)*pw/24;y=T+ph-(raw[i]/scale)/ceiling*ph
+      printf "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"2.1\" fill=\"#91e4ff\"/>",x,y
+    }
+    printf "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"4\" fill=\"#edfaff\" stroke=\"#5fcaf0\" stroke-width=\"1.5\"/>",lastx,lasty
+    for(hour=0;hour<24;hour+=3){
+      x=L+(hour+.5)*pw/24
+      printf "<text x=\"%.1f\" y=\"208\" font-size=\"10\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d:00</text>",x,hour
+    }
     print "</svg>"
   }' "$FLOWHIST"
 }
@@ -566,26 +665,23 @@ svg_signal() {
   $1>=s && $1<e {
      i=int(($1-s)/3600);if(i<0||i>23)next
      if($2!="NA"&&$2>=-140&&$2<=-40){rs[i]+=$2;rn[i]++}
-     if($3!="NA"&&$3>=-40&&$3<=40){ss[i]+=$3;sn[i]++}
   }
   END{
-    n=0;for(i=0;i<24;i++)if(rn[i]||sn[i])n++
+    n=0;for(i=0;i<24;i++)if(rn[i])n++
     if(n<2)exit
     print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" viewBox=\"0 0 620 190\" style=\"max-width:620px;border-radius:12px;background:#0d192d\">"
-    print "<text x=\"17\" y=\"17\" fill=\"#edf7ff\" font-size=\"12\" font-weight=\"bold\">F50 信号 · RSRP（左轴）/ SINR（右轴）</text>"
+    print "<text x=\"17\" y=\"17\" fill=\"#edf7ff\" font-size=\"12\" font-weight=\"bold\">F50 信号 · RSRP（dBm）</text>"
     for(i=0;i<=3;i++){y=163-i*38;printf "<path d=\"M51 %d H563\" stroke=\"#28405b\" stroke-width=\".65\"/>\n",y}
-    p="";q="";last1=-2;last2=-2
-    for(i=0;i<24;i++){
-      x=54+(i+.5)/24*502
-      if(rn[i]){v=rs[i]/rn[i];y=163-(v+140)/100*125;p=p ((last1==i-1)?"L":"M") sprintf("%.1f,%.1f ",x,y);last1=i}
-      if(sn[i]){v=ss[i]/sn[i];y=163-(v+40)/80*125;q=q ((last2==i-1)?"L":"M") sprintf("%.1f,%.1f ",x,y);last2=i}
+    p="";last=-2
+    for(i=0;i<24;i++)if(rn[i]){
+      x=54+(i+.5)/24*502;v=rs[i]/rn[i];y=163-(v+140)/100*125
+      p=p ((last==i-1)?"L":"M") sprintf("%.1f,%.1f ",x,y);last=i
     }
     if(p!="")printf "<path d=\"%s\" fill=\"none\" stroke=\"#56b9ed\" stroke-width=\"2.2\"/>\n",p
-    if(q!="")printf "<path d=\"%s\" fill=\"none\" stroke=\"#efbc5e\" stroke-width=\"2.2\"/>\n",q
-    print "<text x=\"20\" y=\"36\" fill=\"#56b9ed\" font-size=\"10\">-40</text><text x=\"15\" y=\"166\" fill=\"#56b9ed\" font-size=\"10\">-140</text><text x=\"574\" y=\"36\" fill=\"#efbc5e\" font-size=\"10\">40</text><text x=\"574\" y=\"166\" fill=\"#efbc5e\" font-size=\"10\">-40</text>"
-    for(hour=0;hour<24;hour++){
+    print "<text x=\"20\" y=\"36\" fill=\"#56b9ed\" font-size=\"10\">-40</text><text x=\"15\" y=\"166\" fill=\"#56b9ed\" font-size=\"10\">-140</text>"
+    for(hour=0;hour<24;hour+=3){
       ax=51+(hour+0.5)*512/24
-      printf "<text x=\"%.1f\" y=\"182\" font-size=\"8\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d点</text>",ax,hour
+      printf "<text x=\"%.1f\" y=\"182\" font-size=\"10\" text-anchor=\"middle\" fill=\"#a9bfd5\">%02d:00</text>",ax,hour
     }
     print "</svg>"
   }' "$SIGNAL"
@@ -606,7 +702,6 @@ report_html() {
   if [ "$sigcnt" -gt 0 ];then
     sr=$(awk -v a="$sigsum" -v b="$sigcnt" 'BEGIN{printf "%.1f",a/b}')' dBm'
   else sr='不可用';fi
-  if [ "$sinn" -gt 0 ];then si=$(awk -v a="$sinsum" -v b="$sinn" 'BEGIN{printf "%.1f",a/b}')' dB';else si='不可用';fi
   percent='--'
   [ "$sigcnt" -eq 0 ] || percent=$(awk -v a="$weak" -v b="$sigcnt" 'BEGIN{printf "%.1f%%",a*100/b}')
   since=$(printf '%s' "$d" | sed 's/^\(....\)\(..\)\(..\)$/\1-\2-\3/')
@@ -616,7 +711,7 @@ report_html() {
   printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">温度最高/平均/最低</td><td style="padding:8px;border:1px solid #cbd7e6">%s / %s / %s ℃</td></tr>' "$ma" "$av" "$mi"
   printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">今日监控流量增量</td><td style="padding:8px;border:1px solid #cbd7e6">%s</td></tr>' "$dy"
   printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">本月监控流量增量</td><td style="padding:8px;border:1px solid #cbd7e6">%s</td></tr>' "$mo"
-  printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">平均 RSRP / SINR</td><td style="padding:8px;border:1px solid #cbd7e6">%s / %s</td></tr></table>' "$sr" "$si"
+  printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">平均 RSRP</td><td style="padding:8px;border:1px solid #cbd7e6">%s</td></tr></table>' "$sr"
   printf '<h3 style="color:#173a66">02 · 超温与信号统计</h3><table style="width:100%%;border-collapse:collapse;font-size:13px"><tr style="background:#dae9f7"><th style="padding:8px;border:1px solid #cbd7e6">指标</th><th style="padding:8px;border:1px solid #cbd7e6">统计</th></tr>'
   printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">≥60 / 65 / 70 / 75 ℃</td><td style="padding:8px;border:1px solid #cbd7e6">%s / %s / %s / %s 分钟</td></tr>' "$((s60/60))" "$((s65/60))" "$((s70/60))" "$((s75/60))"
   printf '<tr><td style="padding:8px;border:1px solid #cbd7e6">弱信号样本（RSRP≤-105）</td><td style="padding:8px;border:1px solid #cbd7e6">%s / %s，%s</td></tr></table>' "$weak" "$sigcnt" "$percent"
@@ -631,28 +726,56 @@ report_html() {
     else printf '<p>温度样本不足，暂时无法生成24小时折线图。</p>';fi
     chart=$(svg_flow "$from" "$to")
     if [ -n "$chart" ];then
-      printf '<h3 style="color:#173a66">04 · 24小时流量柱状图</h3>%s' "$chart"
-    else printf '<p>分时流量样本不足，暂时无法生成流量图。</p>';fi
+      printf '<h3 style="color:#173a66">04 · 24小时累计流量折线图</h3>%s<p style="font-size:11px;color:#64748b">从首次有效采样起统计当日累计量；缺失时段不补造数据，数据不等于运营商账单。</p>' "$chart"
+    else printf '<p>当日累计流量暂无有效采样，暂时无法生成折线图。</p>';fi
     chart=$(svg_signal "$from" "$to")
     if [ -n "$chart" ];then
-      printf '<h3 style="color:#173a66">05 · 24小时信号双轴曲线</h3>%s' "$chart"
+      printf '<h3 style="color:#173a66">05 · 24小时信号趋势图（RSRP）</h3>%s' "$chart"
     else printf '<p>信号采样不足，暂时无法生成信号图。</p>';fi
   else printf '<p>设备日期转换不可用，本次仅包含统计表格。</p>';fi
   printf '<p style="font-size:11px;color:#64748b">今日和本月均由首次有效采样起同源连续增量累计；原厂计数可在插件页面单独查看，重启或源切换期间存在遗漏；不是运营商账单。图表使用内嵌SVG，实际微信展示以收到的内容为准。</p></div>'
+}
+
+# RSRP is sampled every minute. Alert only after five minutes of continuous weak
+# samples. Recover at >= -100 dBm for three minutes before re-arming.
+check_weak_signal() {
+  case "$SIGNAL_RSRP" in
+    -[0-9]*)
+      if [ "$SIGNAL_RSRP" -le -105 ];then
+        WEAK_RECOVER=0
+        [ "$WEAK_SINCE" -gt 0 ] || WEAK_SINCE=$now
+        if [ "$WEAK_ARMED" -eq 1 ] && [ $((now-WEAK_SINCE)) -ge 300 ];then
+          queue_notice WEAK_SIGNAL "弱信号提醒：RSRP ${SIGNAL_RSRP} dBm，连续约5分钟不高于 -105 dBm；可能影响上网速度和稳定性。请检查摆放位置与网络覆盖。"
+          WEAK_ARMED=0
+          logit 'ALERT_WEAK_SIGNAL'
+        fi
+        return 0
+      fi
+      if [ "$SIGNAL_RSRP" -ge -100 ];then
+        WEAK_SINCE=0
+        [ "$WEAK_RECOVER" -gt 0 ] || WEAK_RECOVER=$now
+        [ $((now-WEAK_RECOVER)) -ge 180 ] && WEAK_ARMED=1
+        return 0
+      fi
+      ;;
+  esac
+  # Unavailable and -104..-101 dBm samples do not count as continuous weak or recovery.
+  WEAK_SINCE=0;WEAK_RECOVER=0
 }
 
 report_daily() {
   [ "$(cat "$DAILY" 2>/dev/null)" = 1 ] || return 0
   [ "$(cat "$PUSH" 2>/dev/null)" = 1 ] || return 0
   hour=$(cat "$HOUR" 2>/dev/null)
-  is_int "$hour" || hour=08
+  is_int "$hour" || hour=22
   [ "$(date +%H)" -ge "$hour" ] || return 0
   flag=$(cat "$REPORT_MARK" 2>/dev/null)
   [ "$flag" = "$TODAY" ] && return 0
-  [ -r "$YDAY" ] || return 0
-  summary=$(report_html "$YDAY") || return 0
+  # At the configured hour, send a snapshot of the CURRENT day (22:00 by default).
+  [ -r "$STATS" ] || return 0
+  summary=$(report_html "$STATS") || return 0
   summary=$(printf '%s' "$summary" | tr '\n' ' ')
-  queue_notice "DAILY_$(awk '{print $1}' "$YDAY")" "$summary"
+  queue_notice "DAILY_$TODAY" "$summary"
   printf '%s\n' "$TODAY" > "$REPORT_MARK"
 }
 alert_brief() {
@@ -681,7 +804,7 @@ run() {
   trap 'stats_save;led_restore;rm -f "$PID"' EXIT
   trap 'exit 0' INT TERM HUP
   stats_load
-  LAST_MIN=-1;LAST_SAMP=0;LAST_STATS=0;LAST_SIG=0;LAST_FLOW=0;LAST_SEND=0;RISE_AT=0;RISE_START=0;RISE_ARMED=1
+  LAST_MIN=-1;LAST_SAMP=0;LAST_STATS=0;LAST_SIG=0;LAST_FLOW=0;LAST_SEND=0;RISE_AT=0;RISE_START=0;RISE_ARMED=1;WEAK_SINCE=0;WEAK_RECOVER=0;WEAK_ARMED=1
   T1=0;T2=0;T3=0;ARM1=1;ARM2=1;ARM3=1;COOL_FROM=0
   LAST_CONF=''
   logit 'START MONITOR_ONLY no_shutdown no_data_toggle'
@@ -732,9 +855,9 @@ run() {
     fi
     if [ $((now-LAST_SIG)) -ge 60 ];then
       LAST_SIG=$now;signal_probe
+      check_weak_signal
       if [ "$SIGNAL_RSRP" != NA ];then
         SGN=$((SGN+1));SGSUM=$((SGSUM+SIGNAL_RSRP))
-        [ "$SIGNAL_SINR" = NA ] || { SINN=$((SINN+1));SINSUM=$((SINSUM+SIGNAL_SINR)); }
         [ "$SIGNAL_RSRP" -le -105 ] && WEAK=$((WEAK+1)) || STRONG=$((STRONG+1))
       fi
     fi
@@ -772,7 +895,7 @@ probe_now() {
   status
 }
 status() {
-  echo VERSION=1.1.1
+  echo VERSION=2.0.0
   led_status
   if [ -r "$REC" ];then
     IFS='|' read -r tag sample_ts remaining < "$REC"
@@ -801,6 +924,7 @@ status() {
 case "$1" in
  scan) scan;; read) read_temp;; run) run;; start) start;; stop) stop;; status) status;; selftest) selftest;;
  led_config) led_config "$2";; led_status) led_status;; led_cleanup) led_cleanup_legacy;;
+ led_test) led_test_color "$2";; led_test_restore) led_test_restore;;
  boot) boot_on && echo BOOT_ENABLED;;
  history) tail -n 3000 "$HISTORY" 2>/dev/null || true;;
  signals) tail -n 3000 "$SIGNAL" 2>/dev/null || true;;

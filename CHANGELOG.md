@@ -1,5 +1,15 @@
 # Changelog / 更新日志
 
+## v2.0.0 — 2026-11-24 (stable edition)
+
+- Upgrade the user-supplied v1.2.2 UFI-TOOLS plugin to 2.0.0 with backward-compatible state paths.
+- Preserve cumulative daily traffic and fixed-axis temperature/RSRP charts; omit unavailable SINR.
+- Add a PushPlus weak-signal warning for RSRP ≤ -105 dBm sustained five minutes, re-armed after ≥ -100 dBm for three minutes.
+- Default fresh installs to **22:00 same-day** reports, preserving saved schedule and token on upgrade.
+- Prevent stale-sample warning from being overwritten and isolate concurrent PushPlus JSON request files.
+- JavaScript and Shell syntax, embedded Base64 integrity, and mock threshold tests passed locally. Real F50 / WeChat validation remains outstanding.
+
+
 ## v1.1.1 — 2026-11-24 (maintenance)
 
 - Add a user-confirmed, one-click cleanup for the old `/data/kano_temp_led.sh` script and its exact UFI-TOOLS boot hook.

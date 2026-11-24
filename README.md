@@ -1,7 +1,18 @@
 # F50 Monitor & Alert · F50 设备监控与微信警报
 
-**v1.1.1 · Community Plugin for UFI-TOOLS · 旧灯控残留清理 / Legacy LED Cleanup**  
+**v2.0.0 · Community Plugin for UFI-TOOLS · 正式版 / Stable release**  
 [中文说明](#中文介绍) · [English](#english-introduction) · [下载安装 / Download](#下载安装--installation) · [联系作者 / Contact](#作者与联系--author--contact)
+
+
+## v2.0.0 正式版 / Stable Release
+
+**新安装默认 22:00 推送当日统计**（升级保留原时间和 PushPlus Token）。RSRP 连续五分钟 ≤ -105 dBm 才发弱信号提醒，信号连续三分钟 ≥ -100 dBm 才重新布防。提供温度、累计流量、RSRP 三条折线趋势；左侧纵轴固定，缺失采样不填充。
+
+**安全与兼容性**：保留 v1.2.2 监控历史、流量计数基线与配置目录。LED 默认关闭，只有用户主动启用后才进行灯控。不会自动关机、切断移动数据或调节 CPU 频率。监控的是芯片温度而不是外接电池的电芯温度。微信内嵌 SVG 是否展示、PushPlus 能否实际送达、F50 驱动行为均需设备实测。
+
+**安装 / Install**：下载仓库根目录 `F50_Monitor_Alert_v2.0.0.txt` 并导入 UFI-TOOLS，打开插件点击「一键安装 / 从旧版升级」，再运行「只读自检」并发送微信测试消息。
+
+**English:** v2.0.0 adds same-day reporting (22:00 on fresh installs), sustained weak-signal alerts and improved stale-data indication. Upgrades preserve stored settings and history. Physical-device verification remains necessary.
 
 ## 中文介绍
 
@@ -21,8 +32,8 @@
 | --- | --- |
 | 温度监控 | 1h / 6h / 12h / 24h 曲线、整点时间轴、最高/最低/平均温度 |
 | 三级温度提醒 | 可设定持续高温阈值及升温速度预警；**只提醒，不关机** |
-| 蜂窝流量统计 | 当日/当月**监控增量**和每小时柱状图，另行展示可用的原厂月度计数 |
-| 4G/5G 信号监测 | RSRP 趋势；SINR 仅在设备/固件提供有效值时显示 |
+| 蜂窝流量统计 | 当日/当月**监控增量**与当天累计流量折线图，另行展示可用的原厂月度计数 |
+| 4G/5G 信号监测 | RSRP 趋势（不显示不稳定的 SINR）；RSRP≤-105 dBm 连续 5 分钟推送弱信号提醒 |
 | 微信 PushPlus | 即时异常摘要、每日 HTML 统计表、温度/流量/信号图表（微信内 SVG 显示依客户端支持） |
 | 运维工具 | 温区识别、状态采样、日志查看、CSV 导出、监控自检、开机自启 |
 
@@ -54,8 +65,8 @@ It runs with the **ZTE F50 UFI-TOOLS enhanced web interface** and optionally sen
 | --- | --- |
 | Temperature trends | 1h/6h/12h/24h charts with clock-time labels, min/max/average |
 | Heat alerts | Configurable sustained-temperature thresholds and rapid-rise warning; **no auto-shutdown** |
-| Mobile data usage | Daily/monthly **monitored deltas** and hourly bars; separate native counter when available |
-| 4G/5G radio status | RSRP trends, optional SINR when exposed by the firmware |
+| Mobile data usage | Daily/monthly **monitored deltas** and cumulative daily line chart; separate native counter when available |
+| 4G/5G radio status | RSRP trends and weak-signal alerts (≤ -105 dBm for 5 min); unavailable SINR omitted |
 | WeChat reports | PushPlus event notifications, daily HTML tables, and optional charts (SVG display depends on the client) |
 | Diagnostics | Thermal-zone selection, data export, logs, self-check, and startup monitoring |
 
